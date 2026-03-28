@@ -1,14 +1,10 @@
-import os
-from dotenv import load_dotenv
-from supabase import create_client
+
 from fastapi import FastAPI
+from app.routers import auth
+from app.database import client
 
-load_dotenv()
-URL = os.getenv('SUPABASE_URL')
-KEY = os.getenv('SUPABASE_KEY')
-
-client = create_client(URL,KEY)
 app = FastAPI()
+app.include_router(auth.router)
 @app.get("/health")
 async def first_api():
     return {'status': 'ThinkTrace is running'}
