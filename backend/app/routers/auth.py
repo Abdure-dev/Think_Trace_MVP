@@ -1,6 +1,9 @@
-from fastapi import APIRouter,Body
+from fastapi import APIRouter,Depends
 from app.schemas import SignupRequest, LoginRequest
 from app.database import client
+from app.dependencies import get_current_user, security
+from fastapi.security import HTTPBearer
+from fastapi import Security
 
 
 router = APIRouter()
@@ -29,3 +32,6 @@ async def login(body: LoginRequest):
         'password':body.password
     })
     return response.session.access_token
+@router.get('/me')
+async def get_me(current_user =Security(get_current_user)):
+    return current_user

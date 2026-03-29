@@ -2,8 +2,14 @@
 from fastapi import FastAPI
 from app.routers import auth
 from app.database import client
+from fastapi.security import HTTPBearer
+security = HTTPBearer()
+app = FastAPI(
+    title = "ThinkTrace API",
+    version="0.1.0",
+    swagger_ui_parameters={"persistAuthorization":True}
+)
 
-app = FastAPI()
 app.include_router(auth.router)
 @app.get("/health")
 async def first_api():
