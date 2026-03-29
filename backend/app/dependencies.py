@@ -10,7 +10,8 @@ async def get_current_user(authorization = Security(security)):
     
     try:
         user = client.auth.get_user(token)
-        return user
+        profile = client.table("Users").select("first_name","last_name","email","id","role","university_id").eq("id",user.user.id).execute()
+        return profile.data[0]
     except Exception as e:
         print(f"Auth error: {e}")
         raise HTTPException(status_code=401,detail=str(e))
