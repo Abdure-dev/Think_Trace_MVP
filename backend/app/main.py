@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from app.routers import auth
 from app.database import client
 from fastapi.security import HTTPBearer
+from app.routers import courses
 security = HTTPBearer()
 app = FastAPI(
     title = "ThinkTrace API",
@@ -11,6 +12,7 @@ app = FastAPI(
 )
 
 app.include_router(auth.router)
+app.include_router(courses.router)
 @app.get("/health")
 async def first_api():
     return {'status': 'ThinkTrace is running'}
