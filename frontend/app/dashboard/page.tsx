@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -44,10 +45,15 @@ export default function DashboardPage() {
       <h1>Dashboard</h1>
       <h2>Your Courses</h2>
       {courses.map((enrollement: any) => (
-        <div key={enrollement.id}>
-          <h3> {enrollement.Courses?.title}</h3>
-          <p>{enrollement.Courses?.semester}</p>
-        </div>
+        <Link
+          key={enrollement.course_id}
+          href={`/courses/${enrollement.course_id}`}
+        >
+          <div>
+            <h3> {enrollement.Courses?.title}</h3>
+            <p>{enrollement.Courses?.semester}</p>
+          </div>
+        </Link>
       ))}
     </main>
   );
