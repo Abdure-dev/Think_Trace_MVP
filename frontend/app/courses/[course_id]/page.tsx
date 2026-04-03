@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { use } from "react";
+import Link from "next/link";
 
 export default function AssignmentPage({
   params,
@@ -37,11 +38,14 @@ export default function AssignmentPage({
   return (
     <main>
       <h1>Assignment</h1>
+
       {assignment.map((a: any) => (
-        <div key={a.id}>
-          <h3>{a.title}</h3>
-          <p>{a.description}</p>
-        </div>
+        <Link key={a.id} href={`/assignments/${a.id}`}>
+          <div>
+            <h3>{a.title}</h3>
+            <p>{a.description}</p>
+          </div>
+        </Link>
       ))}
     </main>
   );
