@@ -68,19 +68,109 @@ export default function Get_single_assignment({
       setStudentinput(""); // clear the input
     }
   }
+  const stages = [
+    "understand",
+    "concept",
+    "plan",
+    "attempt",
+    "critique",
+    "reflection",
+  ];
+  const currentIndex = stages.indexOf(stage);
+
   return (
-    <>
-      <main>
-        <h1>{assignment?.title}</h1>
-        <p>{assignment?.description}</p>
-        <h2>Stage: {stage}</h2>
-        <textarea
-          value={studentinput}
-          onChange={(e) => setStudentinput(e.target.value)}
-          placeholder={`write your ${stage} here...`}
-        />
-        <button onClick={handleSubmit}>submit</button>
-      </main>
-    </>
+    <div className="min-h-screen flex" style={{ backgroundColor: "#f8f9fc" }}>
+      {/* Left sidebar - stages */}
+      <div
+        className="w-64 min-h-screen p-6"
+        style={{ backgroundColor: "#1e2a4a" }}
+      >
+        <div className="flex items-center gap-3 mb-10">
+          <div
+            className="w-8 h-8 rounded-lg flex items-center justify-center"
+            style={{
+              background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+            }}
+          >
+            <span className="text-white font-bold text-sm">T</span>
+          </div>
+          <span className="text-white font-bold text-lg">ThinkTrace</span>
+        </div>
+
+        <p className="text-blue-300 text-xs uppercase tracking-wide font-semibold mb-4">
+          Stages
+        </p>
+        <div className="flex flex-col gap-2">
+          {stages.map((s, i) => (
+            <div
+              key={s}
+              className={`flex items-center gap-3 px-4 py-3 rounded-xl transition ${
+                s === stage
+                  ? "bg-white bg-opacity-20 text-white font-medium"
+                  : i < currentIndex
+                  ? "text-green-400"
+                  : "text-blue-300"
+              }`}
+            >
+              <div
+                className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${
+                  i < currentIndex
+                    ? "bg-green-400 text-white"
+                    : s === stage
+                    ? "bg-white text-blue-800"
+                    : "bg-white bg-opacity-20 text-white"
+                }`}
+              >
+                {i < currentIndex ? "✓" : i + 1}
+              </div>
+              <span className="capitalize text-sm">{s}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Main workspace */}
+      <div className="flex-1 p-10">
+        {/* Problem statement */}
+        <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 mb-6">
+          <h1 className="text-xl font-bold text-gray-800 mb-2">
+            {assignment?.title}
+          </h1>
+          <p className="text-gray-600">{assignment?.description}</p>
+        </div>
+
+        {/* Current stage */}
+        <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+          <h2 className="text-lg font-bold text-gray-800 mb-1 capitalize">
+            {stage}
+          </h2>
+          <p className="text-gray-400 text-sm mb-4">Write your {stage} below</p>
+
+          <textarea
+            value={studentinput}
+            onChange={(e) => setStudentinput(e.target.value)}
+            placeholder={`Write your ${stage} here...`}
+            className="w-full h-40 p-4 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-400 resize-none text-gray-700"
+          />
+
+          <div className="flex justify-between items-center mt-4">
+            <p className="text-sm text-gray-400">
+              Stage {currentIndex + 1} of {stages.length}
+            </p>
+            <button
+              onClick={handleSubmit}
+              className="text-white px-8 py-3 rounded-xl font-semibold hover:opacity-90 transition"
+              style={{
+                background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+              }}
+            >
+              {currentIndex < stages.length - 1
+                ? "Submit & Continue →"
+                : "Complete Assignment"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
