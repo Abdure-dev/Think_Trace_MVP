@@ -31,7 +31,6 @@ export default function InstructorCoursePage({
         }
       );
       const studentData = await students.json();
-      console.log("studnt data:", studentData);
       setStudent(studentData.students);
     }
     fetchStudent();
@@ -68,10 +67,25 @@ export default function InstructorCoursePage({
           >
             ← Back to Dashboard
           </Link>
-          <h1 className="text-2xl font-bold text-gray-800 mt-2">Students</h1>
-          <p className="text-gray-400 mt-1">
-            Click a student to view their reasoning trace
-          </p>
+          <div className="flex items-center justify-between mt-2">
+            <div>
+              <h1 className="text-2xl font-bold text-gray-800">Students</h1>
+              <p className="text-gray-400 mt-1">
+                Click a student to view their reasoning trace
+              </p>
+            </div>
+            <Link href={`/instructor/courses/${course_id}/create-assignment`}>
+              <button
+                className="text-white px-6 py-3 rounded-xl font-semibold hover:opacity-90 transition"
+                style={{
+                  background:
+                    "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                }}
+              >
+                + Create Assignment
+              </button>
+            </Link>
+          </div>
         </div>
 
         <div className="flex flex-col gap-4">

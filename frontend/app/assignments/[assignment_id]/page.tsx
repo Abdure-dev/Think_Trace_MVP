@@ -1,7 +1,7 @@
 "use client";
 import { useRouter } from "next/navigation";
 import { use, useEffect, useState } from "react";
-
+import { InlineMath, BlockMath } from "react-katex";
 export default function Get_single_assignment({
   params,
 }: {
@@ -153,6 +153,17 @@ export default function Get_single_assignment({
       // history persists across all stages
     }
   }
+  function renderMath(text: string) {
+    const parts = text.split(/(\$\$[\s\S]+?\$\$|\$[^$]+?\$)/);
+    return parts.map((part, i) => {
+      if (part.startsWith("$$")) {
+        return <BlockMath key={i} math={part.slice(2, -2)} />;
+      } else if (part.startsWith("$")) {
+        return <InlineMath key={i} math={part.slice(1, -1)} />;
+      }
+      return <span key={i}>{part}</span>;
+    });
+  }
 
   return (
     <div className="min-h-screen flex" style={{ backgroundColor: "#f8f9fc" }}>
@@ -217,7 +228,9 @@ export default function Get_single_assignment({
           <h1 className="text-xl font-bold text-gray-800 mb-2">
             {assignment?.title}
           </h1>
-          <p className="text-gray-600">{assignment?.description}</p>
+          <div className="text-gray-600">
+            {renderMath(assignment?.description || "")}
+          </div>
         </div>
 
         {/* Current stage */}

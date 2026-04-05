@@ -8,6 +8,7 @@ from app.routers import assignments
 from app.routers import traces
 from app.routers import instructor
 from fastapi.middleware.cors import CORSMiddleware
+from app.routers import instructor_assignment
 security = HTTPBearer()
 app = FastAPI(
     title = "ThinkTrace API",
@@ -27,6 +28,7 @@ app.include_router(courses.router)
 app.include_router(assignments.router)
 app.include_router(traces.router)
 app.include_router(instructor.router)
+app.include_router(instructor_assignment.router)
 
 @app.get("/health")
 async def first_api():
