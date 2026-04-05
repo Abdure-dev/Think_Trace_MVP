@@ -15,3 +15,7 @@ class TraceEvent(BaseModel):
     stage:Literal["understand","concept","plan", "attempt","critique","reflection"]
     action: Literal["text_submission", "whiteboard_draw", "hint_request", "ai_query", "stage_complete"]
     content: Optional[str] = None
+class AIGuidanceRequest(BaseModel):
+    stage: str
+    student_input: str
+    problem: str

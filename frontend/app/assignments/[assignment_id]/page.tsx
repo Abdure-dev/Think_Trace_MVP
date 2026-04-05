@@ -1,6 +1,7 @@
 "use client";
 import { useRouter } from "next/navigation";
 import { use, useEffect, useState } from "react";
+
 export default function Get_single_assignment({
   params,
 }: {
@@ -8,11 +9,37 @@ export default function Get_single_assignment({
 }) {
   const router = useRouter();
   const { assignment_id } = use(params);
-  console.log("assignment_id", assignment_id);
   const [stage, setStage] = useState("understand");
   const [studentinput, setStudentinput] = useState("");
   const [assignment, setAssignment] = useState<any>(null);
+  const [aiGuidance, setAiGuidance] = useState("");
+  const [understood, setUnderstood] = useState(false);
+  const [conversing, setConversing] = useState(false);
+  const [aiResponse, setAiResponse] = useState("");
+  const [timeLeft, setTimeLeft] = useState(0);
+  const [timerDone, setTimerDone] = useState(false);
 
+  const stages = [
+    "understand",
+    "concept",
+    "plan",
+    "attempt",
+    "critique",
+    "reflection",
+  ];
+
+  const stageTimes: Record<string, number> = {
+    understand: 3 * 60,
+    concept: 4 * 60,
+    plan: 5 * 60,
+    attempt: 8 * 60,
+    critique: 4 * 60,
+    reflection: 3 * 60,
+  };
+
+  const currentIndex = stages.indexOf(stage);
+
+  // Fetch assignment
   useEffect(() => {
     async function fetchAssignment() {
       if (!assignment_id) return;
@@ -21,7 +48,6 @@ export default function Get_single_assignment({
         router.push("/login");
         return;
       }
-
       const assignment_response = await fetch(
         `${process.env.NEXT_PUBLIC_API_URL}/assignments/${assignment_id}`,
         {
@@ -32,51 +58,96 @@ export default function Get_single_assignment({
         }
       );
       const assignment_data = await assignment_response.json();
-      console.log("assignment data:", assignment_data);
       setAssignment(assignment_data);
     }
     fetchAssignment();
   }, [assignment_id]);
+
+  // Timer countdown
+  useEffect(() => {
+    setTimeLeft(stageTimes[stage]);
+    setTimerDone(false);
+
+    const timer = setInterval(() => {
+      setTimeLeft((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          setTimerDone(true);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [stage]);
+
   async function handleSubmit() {
     const token = localStorage.getItem("token");
+    const inputToSend = conversing ? aiResponse : studentinput;
+
+    // Record trace
     await fetch(
       `${process.env.NEXT_PUBLIC_API_URL}/assignments/${assignment_id}/traces`,
       {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
-          "content-type": `application/json`,
+          "Content-Type": "application/json",
         },
         body: JSON.stringify({
           stage: stage,
           action: "text_submission",
-          content: studentinput,
+          content: inputToSend,
         }),
       }
     );
-    const stages = [
-      "understand",
-      "concept",
-      "plan",
-      "attempt",
-      "critique",
-      "reflection",
-    ];
-    const currentIndex = stages.indexOf(stage);
-    if (currentIndex < stages.length - 1) {
+
+    // Get AI guidance
+    const guidanceResponse = await fetch(
+      `${process.env.NEXT_PUBLIC_API_URL}/assignments/${assignment_id}/ai-guidance`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          stage: stage,
+          student_input: inputToSend,
+          problem: assignment?.description,
+        }),
+      }
+    );
+    const guidanceData = await guidanceResponse.json();
+    setAiGuidance(guidanceData.message);
+    setUnderstood(guidanceData.understood);
+    setConversing(true);
+    setAiResponse("");
+
+    // Only move to next stage if AI says understood AND timer is done
+    if (
+      guidanceData.understood &&
+      timerDone &&
+      currentIndex < stages.length - 1
+    ) {
       setStage(stages[currentIndex + 1]);
-      setStudentinput(""); // clear the input
+      setStudentinput("");
+      setAiResponse("");
+      setUnderstood(false);
+      setConversing(false);
+      setAiGuidance("");
     }
   }
-  const stages = [
-    "understand",
-    "concept",
-    "plan",
-    "attempt",
-    "critique",
-    "reflection",
-  ];
-  const currentIndex = stages.indexOf(stage);
+
+  // Format time as MM:SS
+  const formatTime = (seconds: number) => {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}:${String(s).padStart(2, "0")}`;
+  };
+
+  const canContinue = timerDone && understood;
 
   return (
     <div className="min-h-screen flex" style={{ backgroundColor: "#f8f9fc" }}>
@@ -141,17 +212,80 @@ export default function Get_single_assignment({
 
         {/* Current stage */}
         <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-          <h2 className="text-lg font-bold text-gray-800 mb-1 capitalize">
-            {stage}
-          </h2>
+          <div className="flex items-center justify-between mb-1">
+            <h2 className="text-lg font-bold text-gray-800 capitalize">
+              {stage}
+            </h2>
+            {/* Timer */}
+            <div
+              className={`flex items-center gap-2 px-3 py-1 rounded-full text-sm font-semibold ${
+                timerDone
+                  ? "bg-green-100 text-green-600"
+                  : timeLeft < 60
+                  ? "bg-red-100 text-red-500"
+                  : "bg-orange-100 text-orange-500"
+              }`}
+            >
+              {timerDone
+                ? "✓ Time complete"
+                : `⏱ ${formatTime(timeLeft)} remaining`}
+            </div>
+          </div>
           <p className="text-gray-400 text-sm mb-4">Write your {stage} below</p>
 
-          <textarea
-            value={studentinput}
-            onChange={(e) => setStudentinput(e.target.value)}
-            placeholder={`Write your ${stage} here...`}
-            className="w-full h-40 p-4 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-400 resize-none text-gray-700"
-          />
+          {/* Initial input — only show when not conversing */}
+          {!conversing && (
+            <textarea
+              value={studentinput}
+              onChange={(e) => setStudentinput(e.target.value)}
+              onPaste={(e) => e.preventDefault()}
+              onCopy={(e) => e.preventDefault()}
+              onContextMenu={(e) => e.preventDefault()}
+              placeholder={`Write your ${stage} here...`}
+              className="w-full h-40 p-4 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-400 resize-none text-gray-700"
+            />
+          )}
+
+          {/* AI Guidance */}
+          {aiGuidance && (
+            <div
+              className="mt-4 p-4 rounded-xl border border-purple-200"
+              style={{ backgroundColor: "#f5f3ff" }}
+            >
+              <p className="text-xs font-semibold text-purple-500 uppercase tracking-wide mb-2">
+                ThinkTrace AI
+              </p>
+              <p className="text-gray-700">{aiGuidance}</p>
+              {understood && timerDone && (
+                <p className="text-green-500 text-sm font-medium mt-2">
+                  ✓ Ready to move to next stage
+                </p>
+              )}
+              {understood && !timerDone && (
+                <p className="text-orange-500 text-sm font-medium mt-2">
+                  ✓ Understanding confirmed — waiting for timer
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* AI Response Input */}
+          {conversing && !understood && (
+            <div className="mt-4">
+              <p className="text-sm font-medium text-purple-600 mb-2">
+                Your response to ThinkTrace AI:
+              </p>
+              <textarea
+                value={aiResponse}
+                onChange={(e) => setAiResponse(e.target.value)}
+                onPaste={(e) => e.preventDefault()}
+                onCopy={(e) => e.preventDefault()}
+                onContextMenu={(e) => e.preventDefault()}
+                placeholder="Respond to the AI question here..."
+                className="w-full h-24 p-4 border-2 border-purple-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-400 resize-none text-gray-700"
+              />
+            </div>
+          )}
 
           <div className="flex justify-between items-center mt-4">
             <p className="text-sm text-gray-400">
@@ -159,14 +293,27 @@ export default function Get_single_assignment({
             </p>
             <button
               onClick={handleSubmit}
-              className="text-white px-8 py-3 rounded-xl font-semibold hover:opacity-90 transition"
+              disabled={
+                (conversing && !understood && aiResponse.trim() === "") ||
+                (!conversing && studentinput.trim() === "")
+              }
+              className={`text-white px-8 py-3 rounded-xl font-semibold transition hover:opacity-90 ${
+                (conversing && !understood && aiResponse.trim() === "") ||
+                (!conversing && studentinput.trim() === "")
+                  ? "opacity-40 cursor-not-allowed"
+                  : ""
+              }`}
               style={{
                 background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
               }}
             >
-              {currentIndex < stages.length - 1
-                ? "Submit & Continue →"
-                : "Complete Assignment"}
+              {conversing && !understood
+                ? "Send Response →"
+                : canContinue
+                ? currentIndex < stages.length - 1
+                  ? "Continue to next stage →"
+                  : "Complete Assignment"
+                : "Submit →"}
             </button>
           </div>
         </div>
