@@ -71,9 +71,16 @@ Rules:
     text = re.sub(r'```\n?', '', text)
     
     parsed = json.loads(text)
-    return parsed
 
-@router.get('/test-models')
-async def list_models():
-    models = client_ai.models.list()
-    return {"models": [m.name for m in models]}
+   # Log AI interaction
+    client.table("AI_Interactions").insert({
+        "question": body.student_input,
+        "rewritten_prompt": prompt,
+        "response": parsed["message"],
+        "intervention_level": 2,
+        "allowed_mode": "socratic",
+        "ai_model": "gemini-2.5-flash"
+    }).execute()
+
+
+    return parsed
