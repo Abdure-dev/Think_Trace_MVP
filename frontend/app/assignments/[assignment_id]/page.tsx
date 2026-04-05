@@ -18,6 +18,9 @@ export default function Get_single_assignment({
   const [aiResponse, setAiResponse] = useState("");
   const [timeLeft, setTimeLeft] = useState(0);
   const [timerDone, setTimerDone] = useState(false);
+  const [conversationHistory, setConversationHistory] = useState<
+    { role: string; content: string; stage: string }[]
+  >([]);
 
   const stages = [
     "understand",
@@ -38,8 +41,8 @@ export default function Get_single_assignment({
   };
 
   const currentIndex = stages.indexOf(stage);
+  const canContinue = timerDone && understood;
 
-  // Fetch assignment
   useEffect(() => {
     async function fetchAssignment() {
       if (!assignment_id) return;
@@ -52,9 +55,7 @@ export default function Get_single_assignment({
         `${process.env.NEXT_PUBLIC_API_URL}/assignments/${assignment_id}`,
         {
           method: "GET",
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
+          headers: { Authorization: `Bearer ${token}` },
         }
       );
       const assignment_data = await assignment_response.json();
@@ -63,7 +64,6 @@ export default function Get_single_assignment({
     fetchAssignment();
   }, [assignment_id]);
 
-  // Timer countdown
   useEffect(() => {
     setTimeLeft(stageTimes[stage]);
     setTimerDone(false);
@@ -81,6 +81,12 @@ export default function Get_single_assignment({
 
     return () => clearInterval(timer);
   }, [stage]);
+
+  const formatTime = (seconds: number) => {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}:${String(s).padStart(2, "0")}`;
+  };
 
   async function handleSubmit() {
     const token = localStorage.getItem("token");
@@ -116,42 +122,41 @@ export default function Get_single_assignment({
           stage: stage,
           student_input: inputToSend,
           problem: assignment?.description,
+          conversation_history: conversationHistory,
         }),
       }
     );
     const guidanceData = await guidanceResponse.json();
+
+    // Update conversation history with stage context
+    const updatedHistory = [
+      ...conversationHistory,
+      { role: "student", content: inputToSend, stage: stage },
+      { role: "ai", content: guidanceData.message, stage: stage },
+    ];
+    setConversationHistory(updatedHistory);
+
     setAiGuidance(guidanceData.message);
     setUnderstood(guidanceData.understood);
     setConversing(true);
     setAiResponse("");
+  }
 
-    // Only move to next stage if AI says understood AND timer is done
-    if (
-      guidanceData.understood &&
-      timerDone &&
-      currentIndex < stages.length - 1
-    ) {
+  function handleContinue() {
+    if (currentIndex < stages.length - 1) {
       setStage(stages[currentIndex + 1]);
       setStudentinput("");
       setAiResponse("");
       setUnderstood(false);
       setConversing(false);
       setAiGuidance("");
+      // history persists across all stages
     }
   }
 
-  // Format time as MM:SS
-  const formatTime = (seconds: number) => {
-    const m = Math.floor(seconds / 60);
-    const s = seconds % 60;
-    return `${m}:${String(s).padStart(2, "0")}`;
-  };
-
-  const canContinue = timerDone && understood;
-
   return (
     <div className="min-h-screen flex" style={{ backgroundColor: "#f8f9fc" }}>
-      {/* Left sidebar - stages */}
+      {/* Left sidebar */}
       <div
         className="w-64 min-h-screen p-6"
         style={{ backgroundColor: "#1e2a4a" }}
@@ -203,7 +208,12 @@ export default function Get_single_assignment({
       {/* Main workspace */}
       <div className="flex-1 p-10">
         {/* Problem statement */}
-        <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 mb-6">
+        <div
+          className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 mb-6 select-none"
+          style={{ userSelect: "none" }}
+          onCopy={(e) => e.preventDefault()}
+          onContextMenu={(e) => e.preventDefault()}
+        >
           <h1 className="text-xl font-bold text-gray-800 mb-2">
             {assignment?.title}
           </h1>
@@ -216,7 +226,6 @@ export default function Get_single_assignment({
             <h2 className="text-lg font-bold text-gray-800 capitalize">
               {stage}
             </h2>
-            {/* Timer */}
             <div
               className={`flex items-center gap-2 px-3 py-1 rounded-full text-sm font-semibold ${
                 timerDone
@@ -233,7 +242,7 @@ export default function Get_single_assignment({
           </div>
           <p className="text-gray-400 text-sm mb-4">Write your {stage} below</p>
 
-          {/* Initial input — only show when not conversing */}
+          {/* Initial input */}
           {!conversing && (
             <textarea
               value={studentinput}
@@ -246,23 +255,48 @@ export default function Get_single_assignment({
             />
           )}
 
-          {/* AI Guidance */}
-          {aiGuidance && (
-            <div
-              className="mt-4 p-4 rounded-xl border border-purple-200"
-              style={{ backgroundColor: "#f5f3ff" }}
-            >
-              <p className="text-xs font-semibold text-purple-500 uppercase tracking-wide mb-2">
-                ThinkTrace AI
-              </p>
-              <p className="text-gray-700">{aiGuidance}</p>
+          {/* Conversation history — only show current stage messages */}
+          {conversationHistory.filter((msg) => msg.stage === stage).length >
+            0 && (
+            <div className="mt-4 flex flex-col gap-3">
+              {conversationHistory
+                .filter((msg) => msg.stage === stage)
+                .map((msg, index) => (
+                  <div
+                    key={index}
+                    className={`p-3 rounded-xl text-sm ${
+                      msg.role === "student"
+                        ? "bg-gray-50 border border-gray-200 text-gray-700 ml-8"
+                        : "border border-purple-200 text-gray-700 mr-8 select-none"
+                    }`}
+                    style={
+                      msg.role === "ai"
+                        ? { backgroundColor: "#f5f3ff", userSelect: "none" }
+                        : {}
+                    }
+                    onCopy={(e) => e.preventDefault()}
+                    onContextMenu={(e) => e.preventDefault()}
+                  >
+                    <p
+                      className="text-xs font-semibold mb-1"
+                      style={{
+                        color: msg.role === "student" ? "#6b7280" : "#8b5cf6",
+                      }}
+                    >
+                      {msg.role === "student" ? "You" : "ThinkTrace AI"}
+                    </p>
+                    <p>{msg.content}</p>
+                  </div>
+                ))}
+
+              {/* Status messages */}
               {understood && timerDone && (
-                <p className="text-green-500 text-sm font-medium mt-2">
+                <p className="text-green-500 text-sm font-medium mt-1">
                   ✓ Ready to move to next stage
                 </p>
               )}
               {understood && !timerDone && (
-                <p className="text-orange-500 text-sm font-medium mt-2">
+                <p className="text-orange-500 text-sm font-medium mt-1">
                   ✓ Understanding confirmed — waiting for timer
                 </p>
               )}
@@ -292,27 +326,31 @@ export default function Get_single_assignment({
               Stage {currentIndex + 1} of {stages.length}
             </p>
             <button
-              onClick={handleSubmit}
+              onClick={canContinue ? handleContinue : handleSubmit}
               disabled={
-                (conversing && !understood && aiResponse.trim() === "") ||
-                (!conversing && studentinput.trim() === "")
+                !canContinue &&
+                (conversing
+                  ? aiResponse.trim() === ""
+                  : studentinput.trim() === "")
               }
-              className={`text-white px-8 py-3 rounded-xl font-semibold transition hover:opacity-90 ${
-                (conversing && !understood && aiResponse.trim() === "") ||
-                (!conversing && studentinput.trim() === "")
+              className={`text-white px-8 py-3 rounded-xl font-semibold transition ${
+                !canContinue &&
+                (conversing
+                  ? aiResponse.trim() === ""
+                  : studentinput.trim() === "")
                   ? "opacity-40 cursor-not-allowed"
-                  : ""
+                  : "hover:opacity-90"
               }`}
               style={{
                 background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
               }}
             >
-              {conversing && !understood
-                ? "Send Response →"
-                : canContinue
+              {canContinue
                 ? currentIndex < stages.length - 1
                   ? "Continue to next stage →"
                   : "Complete Assignment"
+                : conversing && !understood
+                ? "Send Response →"
                 : "Submit →"}
             </button>
           </div>

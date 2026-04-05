@@ -19,3 +19,4 @@ class AIGuidanceRequest(BaseModel):
     stage: str
     student_input: str
     problem: str
+    conversation_history: list = []
