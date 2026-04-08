@@ -57,40 +57,40 @@ export default function DashboardPage() {
       {/* Sidebar */}
       <div
         className="w-64 min-h-screen flex flex-col p-6"
-        style={{ backgroundColor: "#1e2a4a" }}
+        style={{ backgroundColor: "#5c0000" }}
       >
         <div className="flex items-center gap-3 mb-10">
-          <div
-            className="w-8 h-8 rounded-lg flex items-center justify-center"
-            style={{
-              background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-            }}
-          >
-            <span className="text-white font-bold text-sm">T</span>
+          <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-white">
+            <span className="font-bold text-sm" style={{ color: "#800000" }}>
+              T
+            </span>
           </div>
           <span className="text-white font-bold text-lg">ThinkTrace</span>
         </div>
         <nav className="flex flex-col gap-2">
-          <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-white bg-opacity-10 text-white font-medium">
+          <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-white bg-opacity-20 text-white font-medium">
             <span>Dashboard</span>
           </div>
-          <div className="flex items-center gap-3 px-4 py-3 rounded-xl text-blue-200 hover:bg-white hover:bg-opacity-10 cursor-pointer transition">
+          <div className="flex items-center gap-3 px-4 py-3 rounded-xl text-red-200 hover:bg-white hover:bg-opacity-10 cursor-pointer transition">
             <span>Courses</span>
           </div>
-          <div className="flex items-center gap-3 px-4 py-3 rounded-xl text-blue-200 hover:bg-white hover:bg-opacity-10 cursor-pointer transition">
+          <div className="flex items-center gap-3 px-4 py-3 rounded-xl text-red-200 hover:bg-white hover:bg-opacity-10 cursor-pointer transition">
             <span>Progress</span>
           </div>
         </nav>
         <div className="mt-auto">
-          <div className="flex items-center gap-3 px-4 py-3 rounded-xl text-blue-200">
-            <div className="w-8 h-8 rounded-full bg-blue-400 flex items-center justify-center text-white text-sm font-bold">
+          <div className="flex items-center gap-3 px-4 py-3 rounded-xl text-red-200">
+            <div
+              className="w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold"
+              style={{ backgroundColor: "#800000" }}
+            >
               {user?.first_name?.[0]}
             </div>
             <div>
               <p className="text-white text-sm font-medium">
                 {user?.first_name} {user?.last_name}
               </p>
-              <p className="text-blue-300 text-xs">{user?.role}</p>
+              <p className="text-red-300 text-xs capitalize">{user?.role}</p>
             </div>
           </div>
         </div>
@@ -107,55 +107,116 @@ export default function DashboardPage() {
 
         {/* Student courses */}
         {user?.role === "student" && (
-          <div className="grid grid-cols-2 gap-6">
-            {courses.map((enrollment: any) => (
-              <Link
-                key={enrollment.course_id}
-                href={`/courses/${enrollment.course_id}`}
-              >
-                <div className="bg-white rounded-2xl p-6 shadow-sm hover:shadow-md transition cursor-pointer border border-gray-100">
-                  <div
-                    className="w-10 h-10 rounded-xl mb-4"
-                    style={{
-                      background:
-                        "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-                    }}
-                  ></div>
-                  <h3 className="font-bold text-gray-800 text-lg">
-                    {enrollment.Courses?.title}
-                  </h3>
-                  <p className="text-gray-400 text-sm mt-1">
-                    {enrollment.Courses?.semester}
-                  </p>
+          <>
+            {courses.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-20">
+                <div
+                  className="w-16 h-16 rounded-2xl flex items-center justify-center mb-6"
+                  style={{ backgroundColor: "#f5e6e6" }}
+                >
+                  <span className="text-3xl">📚</span>
                 </div>
-              </Link>
-            ))}
-          </div>
+                <h2 className="text-xl font-bold text-gray-800 mb-2">
+                  No courses yet
+                </h2>
+                <p className="text-gray-400 text-sm mb-8 text-center max-w-sm">
+                  Join a course from your instructor or create your own study
+                  space to get started.
+                </p>
+                <div className="flex gap-4">
+                  <button
+                    className="px-6 py-3 rounded-xl font-semibold text-white transition hover:opacity-90"
+                    style={{ backgroundColor: "#800000" }}
+                  >
+                    Join a Course
+                  </button>
+                  <Link href="/courses/create">
+                    <button
+                      className="px-6 py-3 rounded-xl font-semibold border-2 transition hover:bg-gray-50"
+                      style={{ borderColor: "#800000", color: "#800000" }}
+                    >
+                      Create Your Own
+                    </button>
+                  </Link>
+                </div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-6">
+                {courses.map((enrollment: any) => (
+                  <Link
+                    key={enrollment.course_id}
+                    href={`/courses/${enrollment.course_id}`}
+                  >
+                    <div className="bg-white rounded-2xl p-6 shadow-sm hover:shadow-md transition cursor-pointer border border-gray-100">
+                      <div
+                        className="w-10 h-10 rounded-xl mb-4"
+                        style={{ backgroundColor: "#f5e6e6" }}
+                      ></div>
+                      <h3 className="font-bold text-gray-800 text-lg">
+                        {enrollment.Courses?.title}
+                      </h3>
+                      <p className="text-gray-400 text-sm mt-1">
+                        {enrollment.Courses?.semester}
+                      </p>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </>
         )}
 
         {/* Instructor courses */}
         {user?.role === "instructor" && (
-          <div className="grid grid-cols-2 gap-6">
-            {courses.map((course: any) => (
-              <Link key={course.id} href={`/instructor/courses/${course.id}`}>
-                <div className="bg-white rounded-2xl p-6 shadow-sm hover:shadow-md transition cursor-pointer border border-gray-100">
-                  <div
-                    className="w-10 h-10 rounded-xl mb-4"
-                    style={{
-                      background:
-                        "linear-gradient(135deg, #f093fb 0%, #f5576c 100%)",
-                    }}
-                  ></div>
-                  <h3 className="font-bold text-gray-800 text-lg">
-                    {course.title}
-                  </h3>
-                  <p className="text-gray-400 text-sm mt-1">
-                    {course.semester}
-                  </p>
+          <>
+            {courses.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-20">
+                <div
+                  className="w-16 h-16 rounded-2xl flex items-center justify-center mb-6"
+                  style={{ backgroundColor: "#f5e6e6" }}
+                >
+                  <span className="text-3xl">🎓</span>
                 </div>
-              </Link>
-            ))}
-          </div>
+                <h2 className="text-xl font-bold text-gray-800 mb-2">
+                  No courses yet
+                </h2>
+                <p className="text-gray-400 text-sm mb-8 text-center max-w-sm">
+                  Create your first course and start assigning problems to your
+                  students.
+                </p>
+                <Link href="/instructor/courses/create">
+                  <button
+                    className="px-6 py-3 rounded-xl font-semibold text-white transition hover:opacity-90"
+                    style={{ backgroundColor: "#800000" }}
+                  >
+                    Create Your First Course
+                  </button>
+                </Link>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-6">
+                {courses.map((course: any) => (
+                  <Link
+                    key={course.id}
+                    href={`/instructor/courses/${course.id}`}
+                  >
+                    <div className="bg-white rounded-2xl p-6 shadow-sm hover:shadow-md transition cursor-pointer border border-gray-100">
+                      <div
+                        className="w-10 h-10 rounded-xl mb-4"
+                        style={{ backgroundColor: "#f5e6e6" }}
+                      ></div>
+                      <h3 className="font-bold text-gray-800 text-lg">
+                        {course.title}
+                      </h3>
+                      <p className="text-gray-400 text-sm mt-1">
+                        {course.semester}
+                      </p>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
