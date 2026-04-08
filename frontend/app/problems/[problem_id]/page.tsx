@@ -17,6 +17,20 @@ type ConversationMessage = {
   stage: string;
 };
 
+const STAGE_OBJECTIVES: Record<string, string> = {
+  understand:
+    "Restate the problem in your own words. Identify what is given, what you need to find, and any constraints. Do NOT solve yet.",
+  concept:
+    "Identify the core concepts, theorems, or techniques that apply. Explain WHY each one is relevant to this specific problem.",
+  plan: "Write a numbered step-by-step plan for how you will solve this. Be specific. Do NOT start solving yet.",
+  attempt:
+    "Execute your plan step by step. Show ALL your work. Explain every step as you go. Do not skip anything.",
+  critique:
+    "Examine your solution critically. What could go wrong? What edge cases exist? Is there a better approach?",
+  reflection:
+    "What did you learn? What is the key insight? How does this connect to what you already know? Be specific.",
+};
+
 export default function ProblemWorkspacePage() {
   const router = useRouter();
   const params = useParams();
@@ -25,7 +39,6 @@ export default function ProblemWorkspacePage() {
   const [stage, setStage] = useState("understand");
   const [studentInput, setStudentInput] = useState("");
   const [problem, setProblem] = useState<Problem | null>(null);
-  const [aiGuidance, setAiGuidance] = useState("");
   const [understood, setUnderstood] = useState(false);
   const [conversing, setConversing] = useState(false);
   const [aiResponse, setAiResponse] = useState("");
@@ -35,6 +48,7 @@ export default function ProblemWorkspacePage() {
     ConversationMessage[]
   >([]);
   const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
 
   const stages = [
     "understand",
@@ -44,7 +58,6 @@ export default function ProblemWorkspacePage() {
     "critique",
     "reflection",
   ];
-
   const stageTimes: Record<string, number> = {
     understand: 3 * 60,
     concept: 4 * 60,
@@ -69,7 +82,6 @@ export default function ProblemWorkspacePage() {
       const res = await fetch(
         `${process.env.NEXT_PUBLIC_API_URL}/problems/${problem_id}`,
         {
-          method: "GET",
           headers: { Authorization: `Bearer ${token}` },
         }
       );
@@ -78,19 +90,16 @@ export default function ProblemWorkspacePage() {
         setLoading(false);
         return;
       }
-
       const data = await res.json();
       setProblem(data);
       setLoading(false);
     }
-
     fetchProblem();
   }, [problem_id, router]);
 
   useEffect(() => {
     setTimeLeft(stageTimes[stage]);
     setTimerDone(false);
-
     const timer = setInterval(() => {
       setTimeLeft((prev) => {
         if (prev <= 1) {
@@ -101,7 +110,6 @@ export default function ProblemWorkspacePage() {
         return prev - 1;
       });
     }, 1000);
-
     return () => clearInterval(timer);
   }, [stage]);
 
@@ -113,10 +121,14 @@ export default function ProblemWorkspacePage() {
 
   async function handleSubmit() {
     const token = localStorage.getItem("token");
-    if (!token || !problem) return;
+    if (!token || !problem || submitting) return;
 
     const inputToSend = conversing ? aiResponse : studentInput;
+    if (!inputToSend.trim()) return;
 
+    setSubmitting(true);
+
+    // Save trace
     await fetch(
       `${process.env.NEXT_PUBLIC_API_URL}/problems/${problem_id}/traces`,
       {
@@ -133,7 +145,8 @@ export default function ProblemWorkspacePage() {
       }
     );
 
-    const guidanceResponse = await fetch(
+    // Get AI guidance — send full conversation history
+    const guidanceRes = await fetch(
       `${process.env.NEXT_PUBLIC_API_URL}/problems/${problem_id}/ai-guidance`,
       {
         method: "POST",
@@ -144,25 +157,26 @@ export default function ProblemWorkspacePage() {
         body: JSON.stringify({
           stage,
           student_input: inputToSend,
-          conversation_history: conversationHistory,
+          problem: problem.problem_text,
+          conversation_history: conversationHistory, // full history — all stages
         }),
       }
     );
 
-    const guidanceData = await guidanceResponse.json();
+    const guidanceData = await guidanceRes.json();
 
-    const updatedHistory = [
+    const updatedHistory: ConversationMessage[] = [
       ...conversationHistory,
       { role: "student", content: inputToSend, stage },
       { role: "ai", content: guidanceData.message, stage },
     ];
 
     setConversationHistory(updatedHistory);
-    setAiGuidance(guidanceData.message);
     setUnderstood(guidanceData.understood);
     setConversing(true);
     setAiResponse("");
     if (!conversing) setStudentInput("");
+    setSubmitting(false);
   }
 
   function handleContinue() {
@@ -172,20 +186,17 @@ export default function ProblemWorkspacePage() {
       setAiResponse("");
       setUnderstood(false);
       setConversing(false);
-      setAiGuidance("");
+      // Keep conversationHistory — don't reset it so AI has full context
     }
   }
 
   function renderMath(text: string) {
     const cleaned = (text || "").replace(/\\\\/g, "\\");
-    const parts = cleaned.split(/(\$\$[\s\S]+?\$\$|\$[^$]+?\$)/);
-
-    return parts.map((part, i) => {
-      if (part.startsWith("$$")) {
+    return cleaned.split(/(\$\$[\s\S]+?\$\$|\$[^$]+?\$)/).map((part, i) => {
+      if (part.startsWith("$$"))
         return <BlockMath key={i} math={part.slice(2, -2)} />;
-      } else if (part.startsWith("$")) {
+      if (part.startsWith("$"))
         return <InlineMath key={i} math={part.slice(1, -1)} />;
-      }
       return <span key={i}>{part}</span>;
     });
   }
@@ -198,8 +209,13 @@ export default function ProblemWorkspacePage() {
     );
   }
 
+  const currentStageMessages = conversationHistory.filter(
+    (msg) => msg.stage === stage
+  );
+
   return (
     <div className="min-h-screen flex bg-[#f8f9fc]">
+      {/* Sidebar */}
       <div className="w-64 min-h-screen p-6 bg-[#1e2a4a]">
         <div className="flex items-center gap-3 mb-10">
           <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-gradient-to-br from-[#667eea] to-[#764ba2]">
@@ -211,7 +227,6 @@ export default function ProblemWorkspacePage() {
         <p className="text-blue-300 text-xs uppercase tracking-wide font-semibold mb-4">
           Stages
         </p>
-
         <div className="flex flex-col gap-2">
           {stages.map((s, i) => (
             <div
@@ -241,7 +256,9 @@ export default function ProblemWorkspacePage() {
         </div>
       </div>
 
-      <div className="flex-1 p-10">
+      {/* Main */}
+      <div className="flex-1 p-10 overflow-y-auto">
+        {/* Problem card */}
         <div
           className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 mb-6 select-none"
           style={{ userSelect: "none" }}
@@ -250,21 +267,21 @@ export default function ProblemWorkspacePage() {
         >
           <button
             onClick={() => router.back()}
-            className="text-sm text-gray-400 hover:text-gray-600 transition mb-4"
+            className="text-sm text-gray-400 hover:text-gray-600 mb-4"
           >
             ← Back
           </button>
-
           <h1 className="text-xl font-bold text-gray-800 mb-2">
             Problem {problem?.problem_number}
           </h1>
-          <div className="text-gray-600">
+          <div className="text-gray-600 leading-relaxed">
             {renderMath(problem?.problem_text || "")}
           </div>
         </div>
 
+        {/* Stage workspace */}
         <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-          <div className="flex items-center justify-between mb-1">
+          <div className="flex items-center justify-between mb-3">
             <h2 className="text-lg font-bold text-gray-800 capitalize">
               {stage}
             </h2>
@@ -283,8 +300,15 @@ export default function ProblemWorkspacePage() {
             </div>
           </div>
 
-          <p className="text-gray-400 text-sm mb-4">Write your {stage} below</p>
+          {/* Stage objective */}
+          <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 mb-4">
+            <p className="text-xs font-semibold text-blue-600 uppercase tracking-wide mb-1">
+              Objective
+            </p>
+            <p className="text-sm text-blue-800">{STAGE_OBJECTIVES[stage]}</p>
+          </div>
 
+          {/* Initial input */}
           {!conversing && (
             <textarea
               value={studentInput}
@@ -297,38 +321,36 @@ export default function ProblemWorkspacePage() {
             />
           )}
 
-          {conversationHistory.filter((msg) => msg.stage === stage).length >
-            0 && (
+          {/* Conversation for current stage */}
+          {currentStageMessages.length > 0 && (
             <div className="mt-4 flex flex-col gap-3">
-              {conversationHistory
-                .filter((msg) => msg.stage === stage)
-                .map((msg, index) => (
-                  <div
-                    key={index}
-                    className={`p-3 rounded-xl text-sm ${
-                      msg.role === "student"
-                        ? "bg-gray-50 border border-gray-200 text-gray-700 ml-8"
-                        : "border border-purple-200 text-gray-700 mr-8 select-none"
-                    }`}
-                    style={
-                      msg.role === "ai"
-                        ? { backgroundColor: "#f5f3ff", userSelect: "none" }
-                        : {}
-                    }
-                    onCopy={(e) => e.preventDefault()}
-                    onContextMenu={(e) => e.preventDefault()}
+              {currentStageMessages.map((msg, index) => (
+                <div
+                  key={index}
+                  className={`p-3 rounded-xl text-sm ${
+                    msg.role === "student"
+                      ? "bg-gray-50 border border-gray-200 text-gray-700 ml-8"
+                      : "border border-purple-200 text-gray-700 mr-8 select-none"
+                  }`}
+                  style={
+                    msg.role === "ai"
+                      ? { backgroundColor: "#f5f3ff", userSelect: "none" }
+                      : {}
+                  }
+                  onCopy={(e) => e.preventDefault()}
+                  onContextMenu={(e) => e.preventDefault()}
+                >
+                  <p
+                    className="text-xs font-semibold mb-1"
+                    style={{
+                      color: msg.role === "student" ? "#6b7280" : "#8b5cf6",
+                    }}
                   >
-                    <p
-                      className="text-xs font-semibold mb-1"
-                      style={{
-                        color: msg.role === "student" ? "#6b7280" : "#8b5cf6",
-                      }}
-                    >
-                      {msg.role === "student" ? "You" : "ThinkTrace AI"}
-                    </p>
-                    <div>{renderMath(msg.content || "")}</div>
-                  </div>
-                ))}
+                    {msg.role === "student" ? "You" : "ThinkTrace AI"}
+                  </p>
+                  <div>{renderMath(msg.content || "")}</div>
+                </div>
+              ))}
 
               {understood && timerDone && (
                 <p className="text-green-500 text-sm font-medium mt-1">
@@ -337,12 +359,13 @@ export default function ProblemWorkspacePage() {
               )}
               {understood && !timerDone && (
                 <p className="text-orange-500 text-sm font-medium mt-1">
-                  ✓ Understanding confirmed — waiting for timer
+                  ✓ Stage complete — waiting for timer
                 </p>
               )}
             </div>
           )}
 
+          {/* Response input */}
           {conversing && !understood && (
             <div className="mt-4">
               <p className="text-sm font-medium text-purple-600 mb-2">
@@ -354,7 +377,7 @@ export default function ProblemWorkspacePage() {
                 onPaste={(e) => e.preventDefault()}
                 onCopy={(e) => e.preventDefault()}
                 onContextMenu={(e) => e.preventDefault()}
-                placeholder="Respond to the AI question here..."
+                placeholder="Respond here..."
                 className="w-full h-24 p-4 border-2 border-purple-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-400 resize-none text-gray-700"
               />
             </div>
@@ -364,28 +387,23 @@ export default function ProblemWorkspacePage() {
             <p className="text-sm text-gray-400">
               Stage {currentIndex + 1} of {stages.length}
             </p>
-
             <button
               onClick={canContinue ? handleContinue : handleSubmit}
               disabled={
-                !canContinue &&
-                (conversing
-                  ? aiResponse.trim() === ""
-                  : studentInput.trim() === "")
+                submitting ||
+                (!canContinue &&
+                  (conversing
+                    ? aiResponse.trim() === ""
+                    : studentInput.trim() === ""))
               }
-              className={`text-white px-8 py-3 rounded-xl font-semibold transition ${
-                !canContinue &&
-                (conversing
-                  ? aiResponse.trim() === ""
-                  : studentInput.trim() === "")
-                  ? "opacity-40 cursor-not-allowed"
-                  : "hover:opacity-90"
-              }`}
+              className="text-white px-8 py-3 rounded-xl font-semibold transition disabled:opacity-40 hover:opacity-90"
               style={{
                 background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
               }}
             >
-              {canContinue
+              {submitting
+                ? "..."
+                : canContinue
                 ? currentIndex < stages.length - 1
                   ? "Continue to next stage →"
                   : "Complete Problem"

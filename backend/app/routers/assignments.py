@@ -6,7 +6,6 @@ from google.genai import types
 import os
 import json
 import re
-import base64
 from app.schemas import AIGuidanceRequest
 
 router = APIRouter()
@@ -14,64 +13,255 @@ router = APIRouter()
 client_ai = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+def call_gemini(contents):
+    for model in ["models/gemini-2.5-flash", "models/gemini-2.0-flash"]:
+        try:
+            return client_ai.models.generate_content(model=model, contents=contents)
+        except Exception:
+            continue
+    raise HTTPException(status_code=503, detail="AI service unavailable. Please try again.")
+
 
 def extract_problems_from_text(raw_text: str) -> list[str]:
-    """Ask Gemini to extract individual problems from assignment text."""
-    prompt = f"""You are given an assignment. Extract every distinct problem or question.
-Return ONLY a JSON array of strings, one string per problem, preserving the full problem text.
-Do not add commentary. Do not number them yourself.
+    prompt = f"""You are given academic content with LaTeX math expressions.
+Extract every distinct problem, question, or topic.
+IMPORTANT: If a problem has sub-parts (a), (b), (c), (d) etc — extract EACH sub-part as a SEPARATE item in the array, prefixed with the parent problem context.
+For example, if Problem 1 has parts (a) and (b), return them as two separate strings:
+"Problem 1(a): [full context of problem 1] — Part (a): [sub-part text]"
+"Problem 1(b): [full context of problem 1] — Part (b): [sub-part text]"
 
-Assignment:
+Return ONLY a JSON array of strings, one string per problem or sub-problem.
+CRITICAL: Preserve ALL LaTeX expressions exactly — do not modify or remove $ delimiters or LaTeX commands.
+Do not add commentary.
+
+Content:
 {raw_text}
 
 Return format:
-["Full text of problem 1", "Full text of problem 2", ...]"""
+["Full text of problem or sub-problem 1 with $LaTeX$ intact", "Full text of problem 2", ...]"""
 
-    response = client_ai.models.generate_content(
-        model="models/gemini-2.5-flash",
-        contents=prompt
-    )
-
+    response = call_gemini(prompt)
     text = response.text.strip()
     text = re.sub(r'```json\n?', '', text)
     text = re.sub(r'```\n?', '', text)
-
     try:
         problems = json.loads(text)
         if isinstance(problems, list):
             return [str(p) for p in problems]
     except json.JSONDecodeError:
         pass
-
-    # Fallback — treat the whole thing as one problem
     return [raw_text]
 
 
 def extract_text_from_pdf(file_bytes: bytes) -> str:
-    """Send PDF to Gemini and extract all text content."""
-    b64 = base64.standard_b64encode(file_bytes).decode("utf-8")
+    response = call_gemini([
+        types.Part.from_bytes(data=file_bytes, mime_type="application/pdf"),
+        """Extract all the text from this document.
 
-    response = client_ai.models.generate_content(
-        model="models/gemini-2.5-flash",
-        contents=[
-            types.Part.from_bytes(data=file_bytes, mime_type="application/pdf"),
-            "Extract all the text from this document. Return only the raw text, no commentary."
-        ]
-    )
+CRITICAL MATH RULES:
+- Convert ALL mathematical expressions, equations, symbols to LaTeX
+- Wrap inline math in $ delimiters: $f(n) = O(g(n))$
+- Wrap block/display math in $$ delimiters: $$T(n) = 2T(n/2) + n$$
+- Convert Greek letters: Ω → $\\Omega$, Θ → $\\Theta$, Σ → $\\Sigma$, ∈ → $\\in$
+- Convert summations: ∑ → $\\sum_{i=1}^{n}$
+- Convert square roots: √n → $\\sqrt{n}$
+- Convert fractions: 1/2 → $\\frac{1}{2}$
+- Convert superscripts: n² → $n^2$, n³ → $n^3$
+- Convert subscripts: f_k → $f_k$
+- Keep all problem text, numbering, and sub-parts (a)(b)(c) intact
+- Return raw text only, no commentary"""
+    ])
     return response.text.strip()
 
 
 def extract_text_from_image(file_bytes: bytes, mime_type: str) -> str:
-    """Send image to Gemini and extract all text content."""
-    response = client_ai.models.generate_content(
-        model="models/gemini-2.5-flash",
-        contents=[
-            types.Part.from_bytes(data=file_bytes, mime_type=mime_type),
-            "Extract all the text from this image. Return only the raw text, no commentary."
-        ]
-    )
+    response = call_gemini([
+        types.Part.from_bytes(data=file_bytes, mime_type=mime_type),
+        """Extract all the text from this image.
+
+CRITICAL MATH RULES:
+- Convert ALL mathematical expressions, equations, symbols to LaTeX
+- Wrap inline math in $ delimiters: $f(n) = O(g(n))$
+- Wrap block/display math in $$ delimiters: $$T(n) = 2T(n/2) + n$$
+- Convert Greek letters: Ω → $\\Omega$, Θ → $\\Theta$, Σ → $\\Sigma$, ∈ → $\\in$
+- Convert summations: ∑ → $\\sum_{i=1}^{n}$
+- Convert square roots: √n → $\\sqrt{n}$
+- Convert fractions: 1/2 → $\\frac{1}{2}$
+- Convert superscripts: n² → $n^2$, n³ → $n^3$
+- Convert subscripts: f_k → $f_k$
+- Keep all problem text, numbering, and sub-parts (a)(b)(c) intact
+- Return raw text only, no commentary"""
+    ])
     return response.text.strip()
+
+
+STAGE_DEFINITIONS = {
+    "understand": {
+        "objective": "Read the problem carefully and restate it entirely in your own words. Identify what is given, what you are being asked to find, and any constraints or conditions.",
+        "goal": "Student demonstrates they have read and understood the problem before attempting anything.",
+        "rules": [
+            "Student must restate the problem in their own words — not copy it",
+            "Student must identify what is GIVEN (inputs, known values)",
+            "Student must identify what is ASKED (output, goal)",
+            "Student must identify any constraints or special conditions",
+            "Student must NOT attempt to solve yet — this is comprehension only",
+        ],
+        "unlock_when": "Student has restated the problem, identified givens, identified the goal, and noted constraints — all in their own words. Even if correct, always ask all 5 questions.",
+        "questions": 5,
+        "question_targets": [
+            "Ask them to restate the problem in their own words",
+            "Ask what information is given or known",
+            "Ask what they are being asked to find or prove",
+            "Ask if there are any constraints, edge cases, or special conditions",
+            "Ask what a wrong answer would look like — what are the boundaries of a valid answer",
+        ],
+    },
+    "concept": {
+        "objective": "Identify the core concepts, theorems, data structures, or techniques that apply to this problem. Explain WHY each one is relevant.",
+        "goal": "Student identifies the right tools and justifies why they apply.",
+        "rules": [
+            "Student must name at least one specific concept, theorem, or technique",
+            "Student must explain WHY it applies — not just name it",
+            "Student must connect the concept to the specific structure of the problem",
+            "Student must NOT start planning steps yet — this is identification only",
+        ],
+        "unlock_when": "Student has named the right approach and justified why it fits this problem. Even if correct immediately, always ask all 5 questions.",
+        "questions": 5,
+        "question_targets": [
+            "Ask what type of problem this is (sorting, graph, recursion, proof, etc.)",
+            "Ask what concepts or theorems come to mind and why",
+            "Ask why that concept fits the structure of this specific problem",
+            "Ask if there are alternative approaches and why they chose this one",
+            "Ask what the key insight is that makes this approach work",
+        ],
+    },
+    "plan": {
+        "objective": "Write a clear numbered step-by-step plan for how you will solve this problem BEFORE you start solving. Be specific — each step must be actionable.",
+        "goal": "Student produces a concrete, ordered, logical plan they can follow in the attempt stage.",
+        "rules": [
+            "Plan must be numbered steps — not vague descriptions",
+            "Each step must be specific and actionable",
+            "Plan must follow logically from the concept identified",
+            "Student must NOT execute the plan yet — planning only",
+            "Plan must cover the full solution from start to finish",
+        ],
+        "unlock_when": "Student has a numbered, specific, logical plan that could realistically be followed. Even if the plan is good immediately, always ask all 5 questions.",
+        "questions": 5,
+        "question_targets": [
+            "Ask them to write out their first step specifically",
+            "Ask what comes after that step and why",
+            "Ask how they will handle the core complexity of the problem",
+            "Ask what their final step will produce and how they will know it is correct",
+            "Ask if their plan handles edge cases or boundary conditions",
+        ],
+    },
+    "attempt": {
+        "objective": "Execute your plan step by step. Show ALL your work. Do not skip steps. Write out every calculation, derivation, or logical inference.",
+        "goal": "Student works through the solution with full reasoning shown.",
+        "rules": [
+            "Student must show every step — no skipping",
+            "Student must explain each step as they do it",
+            "Student must follow their plan from the previous stage",
+            "Mistakes are allowed — genuine engagement matters more than correctness",
+            "Student must NOT just write the final answer — the process must be shown",
+        ],
+        "unlock_when": "Student has shown genuine step-by-step work with reasoning. Even if the attempt is strong immediately, always ask all 5 questions.",
+        "questions": 5,
+        "question_targets": [
+            "Ask them to walk through their first step in detail",
+            "Ask them to explain the reasoning behind a specific calculation or inference",
+            "Ask what happens at the critical or most complex step",
+            "Ask if they got stuck anywhere and how they resolved it",
+            "Ask them to verify their answer makes sense given the original problem",
+        ],
+    },
+    "critique": {
+        "objective": "Critically examine your own solution. Identify what could go wrong, edge cases it might fail on, assumptions you made, and whether there is a better approach.",
+        "goal": "Student demonstrates they can think critically about their own work.",
+        "rules": [
+            "Student must identify at least one weakness or assumption in their solution",
+            "Student must think about edge cases — what inputs might break it",
+            "Student must consider whether their solution is optimal",
+            "Student must NOT just say it looks correct — genuine critical thinking required",
+        ],
+        "unlock_when": "Student has identified at least one real weakness, edge case, or improvement. Even if they critique well immediately, always ask all 5 questions.",
+        "questions": 5,
+        "question_targets": [
+            "Ask what assumptions they made that might not always hold",
+            "Ask what input or case might cause their solution to fail",
+            "Ask whether their solution is optimal in time or space and why",
+            "Ask if there is a simpler or more elegant approach",
+            "Ask what they would change if they solved this again from scratch",
+        ],
+    },
+    "reflection": {
+        "objective": "Summarize what you learned from solving this problem. What is the key insight? How does this connect to what you already know? What will you remember?",
+        "goal": "Student consolidates learning and articulates the key takeaway in their own words.",
+        "rules": [
+            "Student must state the core insight or lesson in their own words",
+            "Student must connect this problem to a broader concept or pattern",
+            "Student must NOT just summarize what they did — they must say what they LEARNED",
+            "Student must be specific — 'I learned recursion' is not enough",
+        ],
+        "unlock_when": "Student has articulated a specific, genuine insight. Even if they reflect well immediately, always ask all 5 questions.",
+        "questions": 5,
+        "question_targets": [
+            "Ask what the single most important insight from this problem is",
+            "Ask how this connects to other problems or concepts they have seen",
+            "Ask what they would tell a friend who is stuck on a similar problem",
+            "Ask what they found hardest and what made it click",
+            "Ask how they would recognize a similar problem in the future",
+        ],
+    },
+}
+
+
+def build_ai_prompt(problem: str, stage: str, student_input: str, history_text: str, questions_asked: int) -> str:
+    stage_info = STAGE_DEFINITIONS.get(stage, STAGE_DEFINITIONS["understand"])
+    questions_remaining = max(0, stage_info["questions"] - questions_asked)
+    next_question_target = stage_info["question_targets"][min(questions_asked, len(stage_info["question_targets"]) - 1)]
+
+    return f"""You are a Socratic tutor guiding a student through a structured academic reasoning process.
+
+PROBLEM: {problem}
+
+CURRENT STAGE: {stage.upper()}
+STAGE OBJECTIVE: {stage_info["objective"]}
+STAGE GOAL: {stage_info["goal"]}
+UNLOCK CONDITION: {stage_info["unlock_when"]}
+
+STAGE RULES (enforce strictly):
+{chr(10).join(f"- {r}" for r in stage_info["rules"])}
+
+FULL CONVERSATION HISTORY (all stages):
+{history_text if history_text else "(none)"}
+
+NOTE: Messages are labeled by stage. You are currently in {stage.upper()}.
+Count only YOUR messages labeled [{stage.upper()}] to determine questions asked in this stage.
+Use the full history to understand the student's thinking arc across all stages.
+
+STUDENT'S LATEST RESPONSE: {student_input}
+
+YOUR STATUS:
+- Questions asked in {stage.upper()} stage so far: {questions_asked}
+- Questions remaining: {questions_remaining} of {stage_info["questions"]} required
+- Your next question should target: {next_question_target}
+
+ABSOLUTE RULES — NEVER BREAK THESE:
+1. You MUST ask exactly {stage_info["questions"]} questions in this stage before setting understood to true — NO EXCEPTIONS
+2. Even if the student gives a perfect answer on the first try, you still ask all {stage_info["questions"]} questions
+3. Ask ONLY ONE question per response — never two questions at once
+4. Never give the answer or solve it for them
+5. If the student violates a stage rule (e.g. tries to solve in the understand stage), redirect them firmly back to the stage objective
+6. If questions_remaining > 0 → understood MUST be false, no exceptions
+7. If questions_remaining = 0 AND student has engaged genuinely → understood = true
+8. Keep your message to 2-3 sentences maximum
+9. Briefly acknowledge what the student said, then ask the next targeted question
+
+Respond ONLY with valid JSON:
+{{"message": "your response", "understood": false}}
+
+CRITICAL JSON FORMATTING: Double-escape LaTeX backslashes: \\\\frac not \\frac. Wrap ALL math in $ delimiters."""
 
 
 # ── Routes ───────────────────────────────────────────────────────────────────
@@ -80,7 +270,7 @@ def extract_text_from_image(file_bytes: bytes, mime_type: str) -> str:
 async def create_assignment(
     course_id: str,
     title: str = Form(...),
-    source_type: str = Form(...),  # "pdf" | "image" | "text"
+    source_type: str = Form(...),
     raw_text: str = Form(None),
     file: UploadFile = File(None),
     current_user=Security(get_current_user)
@@ -88,28 +278,20 @@ async def create_assignment(
     if source_type not in ("pdf", "image", "text"):
         raise HTTPException(status_code=400, detail="source_type must be pdf, image, or text")
 
-    # ── Step 1: Get raw text ──────────────────────────────────────────────
     extracted_text = ""
-
     if source_type == "text":
         if not raw_text:
-            raise HTTPException(status_code=400, detail="raw_text is required for text assignments")
+            raise HTTPException(status_code=400, detail="raw_text required")
         extracted_text = raw_text
-
     elif source_type == "pdf":
         if not file:
-            raise HTTPException(status_code=400, detail="File is required for PDF assignments")
-        file_bytes = await file.read()
-        extracted_text = extract_text_from_pdf(file_bytes)
-
+            raise HTTPException(status_code=400, detail="File required")
+        extracted_text = extract_text_from_pdf(await file.read())
     elif source_type == "image":
         if not file:
-            raise HTTPException(status_code=400, detail="File is required for image assignments")
-        file_bytes = await file.read()
-        mime = file.content_type or "image/jpeg"
-        extracted_text = extract_text_from_image(file_bytes, mime)
+            raise HTTPException(status_code=400, detail="File required")
+        extracted_text = extract_text_from_image(await file.read(), file.content_type or "image/jpeg")
 
-    # ── Step 2: Save assignment ───────────────────────────────────────────
     assignment = client.table("Assignments").insert({
         "course_id": course_id,
         "title": title,
@@ -119,22 +301,13 @@ async def create_assignment(
     }).execute()
 
     assignment_id = assignment.data[0]["id"]
-
-    # ── Step 3: Extract problems ──────────────────────────────────────────
     problems = extract_problems_from_text(extracted_text)
-
     problem_rows = [
-        {
-            "assignment_id": assignment_id,
-            "problem_number": i + 1,
-            "problem_text": p,
-        }
+        {"assignment_id": assignment_id, "problem_number": i + 1, "problem_text": p}
         for i, p in enumerate(problems)
     ]
-
     client.table("Problems").insert(problem_rows).execute()
 
-    # ── Step 4: Return assignment + problems ──────────────────────────────
     return {
         "assignment": assignment.data[0],
         "problems": problem_rows,
@@ -153,13 +326,8 @@ async def get_assignment(assignment_id: str, current_user=Security(get_current_u
     assignment = client.table("Assignments").select("*").eq("id", assignment_id).execute()
     if not assignment.data:
         raise HTTPException(status_code=404, detail="Assignment not found")
-
     problems = client.table("Problems").select("*").eq("assignment_id", assignment_id).order("problem_number").execute()
-
-    return {
-        **assignment.data[0],
-        "problems": problems.data
-    }
+    return {**assignment.data[0], "problems": problems.data}
 
 
 @router.post('/problems/{problem_id}/ai-guidance')
@@ -174,56 +342,25 @@ async def get_problem_ai_guidance(
 
     problem_text = problem.data[0]["problem_text"]
 
+    # Build full history with stage labels
     history_text = ""
+    questions_asked_in_stage = 0
     for msg in body.conversation_history:
         role = "Student" if msg["role"] == "student" else "ThinkTrace AI"
-        stage_label = f" [{msg.get('stage', 'unknown')} stage]" if msg.get('stage') else ""
-        history_text += f"\n{role}{stage_label}: {msg['content']}"
+        stage_label = msg.get("stage", "unknown").upper()
+        history_text += f"\n[{stage_label}] {role}: {msg['content']}"
+        if msg["role"] == "ai" and msg.get("stage") == body.stage:
+            questions_asked_in_stage += 1
 
-    prompt = f"""You are a Socratic tutor helping a student deeply understand a problem.
-
-Problem: {problem_text}
-Current stage: {body.stage}
-
-Conversation so far:{history_text if history_text else " (no previous conversation)"}
-
-Student's latest response: {body.student_input}
-
-Your job is to ask exactly 5 Socratic questions before marking the student as understood.
-Count the number of questions already asked in the conversation history.
-Only set understood to true after the student has answered at least 5 questions thoughtfully.
-
-Respond ONLY with valid JSON:
-{{
-  "message": "your response here",
-  "understood": false
-}}
-
-Rules:
-- Count questions already asked from conversation history
-- If the student didn't address the current question properly → rephrase and re-ask the SAME question differently, do NOT move to a new question
-- If the student answered the current question well → move to a new deeper question
-- NEVER ask a question that has already been answered satisfactorily
-- If fewer than 5 questions have been answered satisfactorily → understood is false
-- If 5 questions have been answered satisfactorily AND student shows genuine understanding → set understood to true, congratulate, NO more questions
-- Never give the answer directly
-- Keep message to 2-3 sentences maximum
-- Return ONLY the JSON, no other text
-- Write math in plain text, NOT LaTeX
-CRITICAL JSON FORMATTING RULES:
-- Return ONLY valid JSON
-- In JSON strings, LaTeX backslashes MUST be double-escaped: write \\\\frac not \\frac
-- All LaTeX commands must use double backslashes in JSON strings
-- Always wrap ALL mathematical expressions in $ delimiters
-- Every variable, equation, matrix, or formula must be inside $ or $$ delimiters
-- For matrices, use simple notation like [[a, b], [c, d]] instead of \\begin{{pmatrix}}
-- Avoid complex multi-line LaTeX environments
-"""
-
-    response = client_ai.models.generate_content(
-        model="models/gemini-2.5-flash",
-        contents=prompt
+    prompt = build_ai_prompt(
+        problem_text,
+        body.stage,
+        body.student_input,
+        history_text,
+        questions_asked_in_stage
     )
+
+    response = call_gemini(prompt)
 
     text = response.text.strip()
     text = re.sub(r'```json\n?', '', text)
@@ -245,6 +382,11 @@ CRITICAL JSON FORMATTING RULES:
     else:
         parsed = {"message": "Could you explain your reasoning further?", "understood": False}
 
+    # Enforce 5 questions rule on backend too
+    questions_asked_in_stage_after = questions_asked_in_stage + 1
+    if questions_asked_in_stage_after < STAGE_DEFINITIONS.get(body.stage, {}).get("questions", 5):
+        parsed["understood"] = False
+
     client.table("AI_Interactions").insert({
         "question": body.student_input,
         "rewritten_prompt": prompt,
@@ -255,6 +397,8 @@ CRITICAL JSON FORMATTING RULES:
     }).execute()
 
     return parsed
+
+
 @router.post('/assignments/{assignment_id}/problems')
 async def add_problems(
     assignment_id: str,
@@ -267,25 +411,19 @@ async def add_problems(
         raise HTTPException(status_code=400, detail="Invalid source_type")
 
     extracted_text = ""
-
     if source_type == "text":
         if not raw_text:
             raise HTTPException(status_code=400, detail="raw_text required")
         extracted_text = raw_text
-
     elif source_type == "pdf":
         if not file:
             raise HTTPException(status_code=400, detail="File required")
-        file_bytes = await file.read()
-        extracted_text = extract_text_from_pdf(file_bytes)
-
+        extracted_text = extract_text_from_pdf(await file.read())
     elif source_type == "image":
         if not file:
             raise HTTPException(status_code=400, detail="File required")
-        file_bytes = await file.read()
-        extracted_text = extract_text_from_image(file_bytes, file.content_type)
+        extracted_text = extract_text_from_image(await file.read(), file.content_type)
 
-    # get current max problem_number
     existing = client.table("Problems") \
         .select("problem_number") \
         .eq("assignment_id", assignment_id) \
@@ -294,29 +432,18 @@ async def add_problems(
         .execute()
 
     start_index = existing.data[0]["problem_number"] if existing.data else 0
-
     problems = extract_problems_from_text(extracted_text)
-
     rows = [
-        {
-            "assignment_id": assignment_id,
-            "problem_number": start_index + i + 1,
-            "problem_text": p,
-        }
+        {"assignment_id": assignment_id, "problem_number": start_index + i + 1, "problem_text": p}
         for i, p in enumerate(problems)
     ]
-
     client.table("Problems").insert(rows).execute()
+    return {"added_count": len(rows), "problems": rows}
 
-    return {
-        "added_count": len(rows),
-        "problems": rows
-    }
+
 @router.get('/problems/{problem_id}')
 async def get_problem(problem_id: str, current_user=Security(get_current_user)):
     problem = client.table("Problems").select("*").eq("id", problem_id).execute()
-
     if not problem.data:
         raise HTTPException(status_code=404, detail="Problem not found")
-
     return problem.data[0]
