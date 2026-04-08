@@ -16,7 +16,7 @@ const MODES = {
 export default function DashboardPage() {
   const router = useRouter();
   const [user, setUser] = useState<any>(null);
-  const [courses, setCourses] = useState([]);
+  const [courses, setCourses] = useState<any[]>([]);
   const [workspaces, setWorkspaces] = useState<any[]>([]);
 
   // Workspace modal state
