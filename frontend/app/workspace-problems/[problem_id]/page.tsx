@@ -4,11 +4,19 @@ import { useRouter, useParams, useSearchParams } from "next/navigation";
 import { useEffect, useState, Suspense } from "react";
 import { InlineMath, BlockMath } from "react-katex";
 
+type Part = {
+  id: string;
+  part_label: string;
+  part_text: string;
+  part_number: number;
+};
+
 type Problem = {
   id: string;
   workspace_id: string;
   problem_number: number;
   problem_text: string;
+  parts: Part[];
   sibling_traces?: SiblingTrace[];
 };
 
@@ -42,14 +50,14 @@ const STAGE_OBJECTIVES: Record<string, string> = {
   understand:
     "Restate the problem in your own words. Identify what is given, what you need to find, and any constraints. Do NOT solve yet.",
   concept:
-    "Identify the core concepts, theorems, or techniques that apply. Explain WHY each one is relevant to this specific problem.",
+    "Identify the core concepts, theorems, or techniques that apply. Explain WHY each one is relevant.",
   plan: "Write a numbered step-by-step plan for how you will solve this. Be specific. Do NOT start solving yet.",
   attempt:
-    "Execute your plan step by step. Show ALL your work. Explain every step as you go. Do not skip anything.",
+    "Execute your plan step by step. Show ALL your work. Explain every step. Do not skip anything.",
   critique:
     "Examine your solution critically. What could go wrong? What edge cases exist? Is there a better approach?",
   reflection:
-    "What did you learn? What is the key insight? How does this connect to what you already know? Be specific.",
+    "What did you learn? What is the key insight? How does this connect to what you already know?",
 };
 
 function WorkspaceProblemInner() {
@@ -63,6 +71,7 @@ function WorkspaceProblemInner() {
     | "open";
 
   const [stage, setStage] = useState("understand");
+  const [currentPartIndex, setCurrentPartIndex] = useState(0);
   const [studentInput, setStudentInput] = useState("");
   const [problem, setProblem] = useState<Problem | null>(null);
   const [understood, setUnderstood] = useState(false);
@@ -75,6 +84,8 @@ function WorkspaceProblemInner() {
   >([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [partComplete, setPartComplete] = useState(false);
+  const [allPartsComplete, setAllPartsComplete] = useState(false);
 
   const stages = [
     "understand",
@@ -96,6 +107,19 @@ function WorkspaceProblemInner() {
   const currentIndex = stages.indexOf(stage);
   const canContinue = timerDone && understood;
   const modeInfo = MODES[mode] || MODES.guided;
+
+  const currentPart =
+    problem?.parts && problem.parts.length > 0
+      ? problem.parts[currentPartIndex]
+      : null;
+
+  const activeProblemText = currentPart
+    ? currentPart.part_text
+    : problem?.problem_text || "";
+  const hasMultipleParts = (problem?.parts?.length || 0) > 1;
+  const isLastPart =
+    !problem?.parts?.length || currentPartIndex >= problem.parts.length - 1;
+  const isLastStage = currentIndex === stages.length - 1;
 
   useEffect(() => {
     async function fetchProblem() {
@@ -119,13 +143,13 @@ function WorkspaceProblemInner() {
       const data = await res.json();
       setProblem(data);
 
-      // Seed conversation history from sibling traces
+      // Seed from sibling traces
       if (data.sibling_traces && data.sibling_traces.length > 0) {
         const seeded: ConversationMessage[] = [];
         for (const sibling of data.sibling_traces) {
           seeded.push({
             role: "system",
-            content: `--- Previous part: Problem ${sibling.problem_number} — ${sibling.problem_text} ---`,
+            content: `--- Previous problem ${sibling.problem_number}: ${sibling.problem_text} ---`,
             stage: "understand",
           });
           for (const trace of sibling.traces) {
@@ -160,7 +184,7 @@ function WorkspaceProblemInner() {
       });
     }, 1000);
     return () => clearInterval(timer);
-  }, [stage]);
+  }, [stage, currentPartIndex]);
 
   const formatTime = (s: number) =>
     `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
@@ -174,7 +198,7 @@ function WorkspaceProblemInner() {
 
     setSubmitting(true);
 
-    // Save workspace trace
+    // Save trace
     fetch(
       `${process.env.NEXT_PUBLIC_API_URL}/workspace-problems/${problem_id}/traces`,
       {
@@ -191,7 +215,6 @@ function WorkspaceProblemInner() {
       }
     ).catch(() => {});
 
-    // Get AI guidance with full history
     const guidanceRes = await fetch(
       `${process.env.NEXT_PUBLIC_API_URL}/workspaces/${problem.workspace_id}/problems/${problem_id}/ai-guidance`,
       {
@@ -203,7 +226,7 @@ function WorkspaceProblemInner() {
         body: JSON.stringify({
           stage,
           student_input: inputToSend,
-          problem: problem.problem_text,
+          problem: activeProblemText,
           mode,
           conversation_history: conversationHistory,
         }),
@@ -225,14 +248,44 @@ function WorkspaceProblemInner() {
     setSubmitting(false);
   }
 
-  function handleContinue() {
+  function handleContinueStage() {
     if (currentIndex < stages.length - 1) {
       setStage(stages[currentIndex + 1]);
       setStudentInput("");
       setAiResponse("");
       setUnderstood(false);
       setConversing(false);
-      // Keep conversationHistory — full history carries across stages
+    } else {
+      // Last stage complete — mark part as done
+      setPartComplete(true);
+    }
+  }
+
+  function handleNextPart() {
+    if (!isLastPart) {
+      const nextPartIndex = currentPartIndex + 1;
+      setCurrentPartIndex(nextPartIndex);
+
+      // Add separator to history
+      const nextPart = problem!.parts[nextPartIndex];
+      setConversationHistory((prev) => [
+        ...prev,
+        {
+          role: "system",
+          content: `--- Moving to Part (${nextPart.part_label}): ${nextPart.part_text} ---`,
+          stage: "understand",
+        },
+      ]);
+
+      // Reset stage state
+      setStage("understand");
+      setStudentInput("");
+      setAiResponse("");
+      setUnderstood(false);
+      setConversing(false);
+      setPartComplete(false);
+    } else {
+      setAllPartsComplete(true);
     }
   }
 
@@ -258,17 +311,45 @@ function WorkspaceProblemInner() {
     (msg) => msg.stage === stage && msg.role !== "system"
   );
 
+  // All parts complete screen
+  if (allPartsComplete) {
+    return (
+      <div className="min-h-screen bg-[#f8f9fc] flex items-center justify-center">
+        <div className="bg-white rounded-2xl p-10 shadow-sm border border-gray-100 text-center max-w-md">
+          <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-4">
+            <span className="text-green-600 text-2xl">✓</span>
+          </div>
+          <h2 className="text-2xl font-bold text-gray-800 mb-2">
+            Problem Complete!
+          </h2>
+          <p className="text-gray-400 mb-6">
+            You've worked through all {problem?.parts.length} parts with full
+            reasoning traces.
+          </p>
+          <button
+            onClick={() => router.back()}
+            className="px-6 py-3 rounded-xl text-white font-semibold hover:opacity-90 transition"
+            style={{ backgroundColor: modeInfo.color }}
+          >
+            Back to Problems
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex bg-[#f8f9fc]">
       {/* Sidebar */}
-      <div className="w-64 min-h-screen p-6 bg-[#1e2a4a]">
+      <div className="w-64 min-h-screen p-6 bg-[#1e2a4a] flex flex-col">
         <div className="flex items-center gap-3 mb-4">
           <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-gradient-to-br from-[#667eea] to-[#764ba2]">
             <span className="text-white font-bold text-sm">T</span>
           </div>
           <span className="text-white font-bold text-lg">ThinkTrace</span>
         </div>
-        <div className="mb-6">
+
+        <div className="mb-4">
           <span
             className="text-xs font-semibold px-2.5 py-1 rounded-full text-white"
             style={{ backgroundColor: modeInfo.color }}
@@ -276,6 +357,41 @@ function WorkspaceProblemInner() {
             {modeInfo.label} mode
           </span>
         </div>
+
+        {/* Parts progress */}
+        {hasMultipleParts && (
+          <div className="mb-6">
+            <p className="text-blue-300 text-xs uppercase tracking-wide font-semibold mb-2">
+              Parts
+            </p>
+            <div className="flex gap-2 flex-wrap">
+              {problem!.parts.map((part, i) => (
+                <div
+                  key={part.id}
+                  className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold"
+                  style={{
+                    background:
+                      i < currentPartIndex
+                        ? "#4ade80"
+                        : i === currentPartIndex
+                        ? "white"
+                        : "rgba(255,255,255,0.2)",
+                    color:
+                      i < currentPartIndex
+                        ? "white"
+                        : i === currentPartIndex
+                        ? "#1e2a4a"
+                        : "rgba(255,255,255,0.5)",
+                  }}
+                >
+                  {i < currentPartIndex ? "✓" : `(${part.part_label})`}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Stage progress */}
         <p className="text-blue-300 text-xs uppercase tracking-wide font-semibold mb-4">
           Stages
         </p>
@@ -310,22 +426,6 @@ function WorkspaceProblemInner() {
 
       {/* Main */}
       <div className="flex-1 p-10 overflow-y-auto">
-        {/* Sibling context banner */}
-        {problem?.sibling_traces && problem.sibling_traces.length > 0 && (
-          <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 mb-4">
-            <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-1">
-              Context from previous parts
-            </p>
-            <p className="text-sm text-amber-800">
-              ThinkTrace AI has full context from{" "}
-              {problem.sibling_traces
-                .map((s) => `Problem ${s.problem_number}`)
-                .join(", ")}{" "}
-              to guide you through this part.
-            </p>
-          </div>
-        )}
-
         {/* Problem card */}
         <div
           className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 mb-6 select-none"
@@ -339,148 +439,199 @@ function WorkspaceProblemInner() {
           >
             ← Back
           </button>
-          <h1 className="text-xl font-bold text-gray-800 mb-2">
-            Problem {problem?.problem_number}
-          </h1>
-          <div className="text-gray-600 leading-relaxed">
-            {renderMath(problem?.problem_text || "")}
+
+          <div className="flex items-center gap-3 mb-3">
+            <h1 className="text-xl font-bold text-gray-800">
+              Problem {problem?.problem_number}
+            </h1>
+            {currentPart && (
+              <span className="text-sm font-semibold px-3 py-1 rounded-full bg-gray-100 text-gray-600">
+                Part ({currentPart.part_label})
+              </span>
+            )}
+          </div>
+
+          {/* Show main problem text if has parts */}
+          {problem?.parts && problem.parts.length > 0 && (
+            <div className="text-gray-400 text-sm mb-3 pb-3 border-b border-gray-100">
+              {renderMath(problem.problem_text)}
+            </div>
+          )}
+
+          {/* Current part or full problem */}
+          <div className="text-gray-700 leading-relaxed font-medium">
+            {renderMath(activeProblemText)}
           </div>
         </div>
 
-        {/* Stage workspace */}
-        <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-lg font-bold text-gray-800 capitalize">
-              {stage}
-            </h2>
-            <div
-              className={`flex items-center gap-2 px-3 py-1 rounded-full text-sm font-semibold ${
-                timerDone
-                  ? "bg-green-100 text-green-600"
-                  : timeLeft < 60
-                  ? "bg-red-100 text-red-500"
-                  : "bg-orange-100 text-orange-500"
-              }`}
-            >
-              {timerDone
-                ? "✓ Time complete"
-                : `⏱ ${formatTime(timeLeft)} remaining`}
-            </div>
-          </div>
-
-          {/* Stage objective */}
-          <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 mb-4">
-            <p className="text-xs font-semibold text-blue-600 uppercase tracking-wide mb-1">
-              Objective
-            </p>
-            <p className="text-sm text-blue-800">{STAGE_OBJECTIVES[stage]}</p>
-          </div>
-
-          {/* Initial input */}
-          {!conversing && (
-            <textarea
-              value={studentInput}
-              onChange={(e) => setStudentInput(e.target.value)}
-              onPaste={(e) => e.preventDefault()}
-              placeholder={`Write your ${stage} here...`}
-              className="w-full h-40 p-4 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 resize-none text-gray-700"
-              style={{ "--tw-ring-color": modeInfo.color } as any}
-            />
-          )}
-
-          {/* Conversation for current stage */}
-          {currentStageMessages.length > 0 && (
-            <div className="mt-4 flex flex-col gap-3">
-              {currentStageMessages.map((msg, index) => (
-                <div
-                  key={index}
-                  className={`p-3 rounded-xl text-sm ${
-                    msg.role === "student"
-                      ? "bg-gray-50 border border-gray-200 text-gray-700 ml-8"
-                      : "border text-gray-700 mr-8"
-                  }`}
-                  style={
-                    msg.role === "ai"
-                      ? {
-                          backgroundColor: `${modeInfo.color}08`,
-                          borderColor: `${modeInfo.color}30`,
-                        }
-                      : {}
-                  }
-                >
-                  <p
-                    className="text-xs font-semibold mb-1"
-                    style={{
-                      color:
-                        msg.role === "student" ? "#6b7280" : modeInfo.color,
-                    }}
-                  >
-                    {msg.role === "student" ? "You" : "ThinkTrace AI"}
-                  </p>
-                  <div>{renderMath(msg.content || "")}</div>
-                </div>
-              ))}
-              {understood && timerDone && (
-                <p className="text-green-500 text-sm font-medium mt-1">
-                  ✓ Ready to move to next stage
-                </p>
-              )}
-              {understood && !timerDone && (
-                <p className="text-orange-500 text-sm font-medium mt-1">
-                  ✓ Stage complete — waiting for timer
-                </p>
-              )}
-            </div>
-          )}
-
-          {/* Response input */}
-          {conversing && !understood && (
-            <div className="mt-4">
-              <p
-                className="text-sm font-medium mb-2"
-                style={{ color: modeInfo.color }}
-              >
-                Your response:
+        {/* Part complete — show next part button */}
+        {partComplete && !allPartsComplete && (
+          <div className="bg-green-50 border border-green-200 rounded-2xl p-6 mb-6 flex items-center justify-between">
+            <div>
+              <p className="font-bold text-green-800 text-lg">
+                Part ({currentPart?.part_label}) Complete! 🎉
               </p>
-              <textarea
-                value={aiResponse}
-                onChange={(e) => setAiResponse(e.target.value)}
-                onPaste={(e) => e.preventDefault()}
-                placeholder="Respond here..."
-                className="w-full h-24 p-4 border-2 rounded-xl focus:outline-none resize-none text-gray-700"
-                style={{ borderColor: modeInfo.color }}
-              />
+              <p className="text-green-600 text-sm mt-1">
+                {isLastPart
+                  ? "You've completed all parts of this problem."
+                  : `Ready to move to Part (${
+                      problem?.parts[currentPartIndex + 1]?.part_label
+                    })`}
+              </p>
             </div>
-          )}
-
-          <div className="flex justify-between items-center mt-4">
-            <p className="text-sm text-gray-400">
-              Stage {currentIndex + 1} of {stages.length}
-            </p>
             <button
-              onClick={canContinue ? handleContinue : handleSubmit}
-              disabled={
-                submitting ||
-                (!canContinue &&
-                  (conversing
-                    ? aiResponse.trim() === ""
-                    : studentInput.trim() === ""))
-              }
-              className="text-white px-8 py-3 rounded-xl font-semibold transition disabled:opacity-40 hover:opacity-90"
+              onClick={handleNextPart}
+              className="px-6 py-3 rounded-xl text-white font-semibold hover:opacity-90 transition"
               style={{ backgroundColor: modeInfo.color }}
             >
-              {submitting
-                ? "..."
-                : canContinue
-                ? currentIndex < stages.length - 1
-                  ? "Continue →"
-                  : "Complete"
-                : conversing && !understood
-                ? "Send →"
-                : "Submit →"}
+              {isLastPart
+                ? "Finish Problem"
+                : `Next Part (${
+                    problem?.parts[currentPartIndex + 1]?.part_label
+                  }) →`}
             </button>
           </div>
-        </div>
+        )}
+
+        {/* Stage workspace — hidden when part complete */}
+        {!partComplete && (
+          <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-lg font-bold text-gray-800 capitalize">
+                {stage}
+              </h2>
+              <div
+                className={`flex items-center gap-2 px-3 py-1 rounded-full text-sm font-semibold ${
+                  timerDone
+                    ? "bg-green-100 text-green-600"
+                    : timeLeft < 60
+                    ? "bg-red-100 text-red-500"
+                    : "bg-orange-100 text-orange-500"
+                }`}
+              >
+                {timerDone
+                  ? "✓ Time complete"
+                  : `⏱ ${formatTime(timeLeft)} remaining`}
+              </div>
+            </div>
+
+            {/* Stage objective */}
+            <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 mb-4">
+              <p className="text-xs font-semibold text-blue-600 uppercase tracking-wide mb-1">
+                Objective
+              </p>
+              <p className="text-sm text-blue-800">{STAGE_OBJECTIVES[stage]}</p>
+            </div>
+
+            {/* Initial input */}
+            {!conversing && (
+              <textarea
+                value={studentInput}
+                onChange={(e) => setStudentInput(e.target.value)}
+                onPaste={(e) => e.preventDefault()}
+                placeholder={`Write your ${stage} here...`}
+                className="w-full h-40 p-4 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 resize-none text-gray-700"
+                style={{ "--tw-ring-color": modeInfo.color } as any}
+              />
+            )}
+
+            {/* Conversation */}
+            {currentStageMessages.length > 0 && (
+              <div className="mt-4 flex flex-col gap-3">
+                {currentStageMessages.map((msg, index) => (
+                  <div
+                    key={index}
+                    className={`p-3 rounded-xl text-sm ${
+                      msg.role === "student"
+                        ? "bg-gray-50 border border-gray-200 text-gray-700 ml-8"
+                        : "border text-gray-700 mr-8"
+                    }`}
+                    style={
+                      msg.role === "ai"
+                        ? {
+                            backgroundColor: `${modeInfo.color}08`,
+                            borderColor: `${modeInfo.color}30`,
+                          }
+                        : {}
+                    }
+                  >
+                    <p
+                      className="text-xs font-semibold mb-1"
+                      style={{
+                        color:
+                          msg.role === "student" ? "#6b7280" : modeInfo.color,
+                      }}
+                    >
+                      {msg.role === "student" ? "You" : "ThinkTrace AI"}
+                    </p>
+                    <div>{renderMath(msg.content || "")}</div>
+                  </div>
+                ))}
+                {understood && timerDone && (
+                  <p className="text-green-500 text-sm font-medium mt-1">
+                    ✓ Ready for next stage
+                  </p>
+                )}
+                {understood && !timerDone && (
+                  <p className="text-orange-500 text-sm font-medium mt-1">
+                    ✓ Stage complete — waiting for timer
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Response input */}
+            {conversing && !understood && (
+              <div className="mt-4">
+                <p
+                  className="text-sm font-medium mb-2"
+                  style={{ color: modeInfo.color }}
+                >
+                  Your response:
+                </p>
+                <textarea
+                  value={aiResponse}
+                  onChange={(e) => setAiResponse(e.target.value)}
+                  onPaste={(e) => e.preventDefault()}
+                  placeholder="Respond here..."
+                  className="w-full h-24 p-4 border-2 rounded-xl focus:outline-none resize-none text-gray-700"
+                  style={{ borderColor: modeInfo.color }}
+                />
+              </div>
+            )}
+
+            <div className="flex justify-between items-center mt-4">
+              <p className="text-sm text-gray-400">
+                {hasMultipleParts && `Part (${currentPart?.part_label}) · `}
+                Stage {currentIndex + 1} of {stages.length}
+              </p>
+              <button
+                onClick={canContinue ? handleContinueStage : handleSubmit}
+                disabled={
+                  submitting ||
+                  (!canContinue &&
+                    (conversing
+                      ? aiResponse.trim() === ""
+                      : studentInput.trim() === ""))
+                }
+                className="text-white px-8 py-3 rounded-xl font-semibold transition disabled:opacity-40 hover:opacity-90"
+                style={{ backgroundColor: modeInfo.color }}
+              >
+                {submitting
+                  ? "..."
+                  : canContinue
+                  ? isLastStage
+                    ? isLastPart
+                      ? "Complete Problem ✓"
+                      : `Complete Part (${currentPart?.part_label}) ✓`
+                    : "Continue to next stage →"
+                  : conversing && !understood
+                  ? "Send →"
+                  : "Submit →"}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

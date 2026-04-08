@@ -10,10 +10,18 @@ const MODES = {
   open: { label: "Open", color: "#2d6a4f" },
 };
 
+type Part = {
+  id: string;
+  part_label: string;
+  part_text: string;
+  part_number: number;
+};
+
 type Problem = {
   id: string;
   problem_number: number;
   problem_text: string;
+  parts: Part[];
 };
 
 type Workspace = {
@@ -80,8 +88,13 @@ export default function WorkspacePage() {
 
   const mode = MODES[workspace?.mode as keyof typeof MODES] || MODES.guided;
 
-  function previewText(text: string, max = 160) {
-    return text.length > max ? text.slice(0, max) + "..." : text;
+  function previewText(text: string, max = 120) {
+    if (!text) return "";
+    // Strip LaTeX for preview
+    const stripped = text
+      .replace(/\$[^$]+\$/g, "[math]")
+      .replace(/\$\$[^$]+\$\$/g, "[math]");
+    return stripped.length > max ? stripped.slice(0, max) + "..." : stripped;
   }
 
   return (
@@ -126,28 +139,42 @@ export default function WorkspacePage() {
             </p>
           </div>
         ) : (
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="flex flex-col gap-4">
             {sortedProblems.map((problem) => (
               <Link
                 key={problem.id}
                 href={`/workspace-problems/${problem.id}?mode=${workspace?.mode}`}
                 className="block"
               >
-                <div className="bg-white rounded-2xl p-6 shadow-sm hover:shadow-md transition cursor-pointer border border-gray-100 h-full">
+                <div className="bg-white rounded-2xl p-6 shadow-sm hover:shadow-md transition cursor-pointer border border-gray-100">
                   <div className="flex items-center justify-between mb-3">
-                    <h3 className="font-bold text-gray-800">
+                    <h3 className="font-bold text-gray-800 text-lg">
                       Problem {problem.problem_number}
                     </h3>
                     <span
                       className="text-xs px-3 py-1 rounded-full font-medium text-white"
                       style={{ backgroundColor: mode.color }}
                     >
-                      Start
+                      {problem.parts.length > 0
+                        ? `${problem.parts.length} parts`
+                        : "Start"}
                     </span>
                   </div>
-                  <p className="text-gray-500 text-sm leading-6">
+                  <p className="text-gray-500 text-sm leading-6 mb-3">
                     {previewText(problem.problem_text)}
                   </p>
+                  {problem.parts.length > 0 && (
+                    <div className="flex gap-2 flex-wrap">
+                      {problem.parts.map((part) => (
+                        <span
+                          key={part.id}
+                          className="text-xs px-2.5 py-1 rounded-lg font-medium bg-gray-100 text-gray-600"
+                        >
+                          Part ({part.part_label})
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </Link>
             ))}

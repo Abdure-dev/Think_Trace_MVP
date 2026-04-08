@@ -22,23 +22,41 @@ def call_gemini(contents):
     raise HTTPException(status_code=503, detail="AI service unavailable. Please try again.")
 
 
-def extract_problems_from_text(raw_text: str) -> list[str]:
+def extract_problems_structured(raw_text: str) -> list[dict]:
     prompt = f"""You are given academic content with LaTeX math expressions.
-Extract every distinct problem, question, or topic.
-IMPORTANT: If a problem has sub-parts (a), (b), (c), (d) etc — extract EACH sub-part as a SEPARATE item in the array, prefixed with the parent problem context.
-For example, if Problem 1 has parts (a) and (b), return them as two separate strings:
-"Problem 1(a): [full context of problem 1] — Part (a): [sub-part text]"
-"Problem 1(b): [full context of problem 1] — Part (b): [sub-part text]"
+Extract every distinct problem. For each problem, identify if it has sub-parts (a), (b), (c) etc.
 
-Return ONLY a JSON array of strings, one string per problem or sub-problem.
-CRITICAL: Preserve ALL LaTeX expressions exactly — do not modify or remove $ delimiters or LaTeX commands.
-Do not add commentary.
+Return ONLY a JSON array in this exact format:
+[
+  {{
+    "problem_number": 1,
+    "main_text": "The main problem statement without sub-parts",
+    "parts": [
+      {{"label": "a", "text": "full text of part a with context"}},
+      {{"label": "b", "text": "full text of part b with context"}}
+    ]
+  }},
+  {{
+    "problem_number": 2,
+    "main_text": "Problem with no sub-parts — full text here",
+    "parts": []
+  }}
+]
+
+RULES:
+- If a problem has sub-parts (a)(b)(c) etc, put them in the parts array
+- If a problem has no sub-parts, leave parts as empty array and put full text in main_text
+- Each part text must include enough context to be understood standalone
+- CRITICAL: Preserve ALL LaTeX — wrap math in $ delimiters
+- Convert Greek letters: Ω → $\\Omega$, Θ → $\\Theta$, Σ → $\\Sigma$, ∈ → $\\in$
+- Convert summations: ∑ → $\\sum_{{i=1}}^{{n}}$
+- Convert square roots: √n → $\\sqrt{{n}}$
+- Convert fractions to $\\frac{{a}}{{b}}$
+- Convert superscripts: n² → $n^2$
+- Return ONLY the JSON array, no commentary
 
 Content:
-{raw_text}
-
-Return format:
-["Full text of problem or sub-problem 1 with $LaTeX$ intact", "Full text of problem 2", ...]"""
+{raw_text}"""
 
     response = call_gemini(prompt)
     text = response.text.strip()
@@ -47,10 +65,10 @@ Return format:
     try:
         problems = json.loads(text)
         if isinstance(problems, list):
-            return [str(p) for p in problems]
+            return problems
     except json.JSONDecodeError:
         pass
-    return [raw_text]
+    return [{"problem_number": 1, "main_text": raw_text, "parts": []}]
 
 
 def extract_text_from_pdf(file_bytes: bytes) -> str:
@@ -223,11 +241,9 @@ def build_ai_prompt(mode: str, problem: str, stage: str, student_input: str, his
 
     if mode == "deep_focus":
         return f"""You are a strict academic coach. Deep focus mode — no AI assistance.
-
 Problem: {problem}
 Stage: {stage}
 Student input: {student_input}
-
 Respond ONLY with this JSON:
 {{"message": "Deep focus mode is active. Work through this independently.", "understood": false}}"""
 
@@ -247,9 +263,9 @@ FULL CONVERSATION HISTORY (all stages and all previous parts):
 {history_text if history_text else "(none)"}
 
 NOTE: Messages labeled [STAGE] show which stage they came from.
-Lines starting with "---" are separators between different problem parts — use them to understand what the student already worked through.
+Lines starting with "---" are separators between different problem parts.
 Count only YOUR messages labeled [{stage.upper()}] to determine questions asked in this stage.
-Use the full history to avoid repeating questions and to build on what the student already demonstrated.
+Use the full history to avoid repeating questions and build on what the student already demonstrated.
 If this is a sub-part, reference what the student did in previous parts where relevant.
 
 STUDENT'S LATEST RESPONSE: {student_input}
@@ -270,22 +286,16 @@ ABSOLUTE RULES — NEVER BREAK THESE:
 8. Keep your message to 2-3 sentences maximum
 9. Briefly acknowledge what the student said then ask the next targeted question"""
 
-    if mode == "guided":
-        return base + f"""
+    suffix = f"""
 
 Respond ONLY with valid JSON:
 {{"message": "your response", "understood": false}}
 
 CRITICAL JSON FORMATTING: Double-escape LaTeX: \\\\frac not \\frac. Wrap ALL math in $ delimiters."""
-    else:  # open
-        return base + f"""
 
-In open mode you can explain concepts and give examples but do not hand them the answer. Be warm and encouraging.
-
-Respond ONLY with valid JSON:
-{{"message": "your response", "understood": false}}
-
-CRITICAL JSON FORMATTING: Double-escape LaTeX: \\\\frac not \\frac. Wrap ALL math in $ delimiters."""
+    if mode == "open":
+        return base + "\nIn open mode you can explain concepts and give examples but do not hand them the answer. Be warm and encouraging." + suffix
+    return base + suffix
 
 
 # ── Routes ───────────────────────────────────────────────────────────────────
@@ -325,16 +335,31 @@ async def create_workspace(
     }).execute()
 
     workspace_id = workspace.data[0]["id"]
-    problems = extract_problems_from_text(extracted_text)
-    problem_rows = [
-        {"workspace_id": workspace_id, "problem_number": i + 1, "problem_text": p}
-        for i, p in enumerate(problems)
-    ]
-    client.table("Workspace_Problems").insert(problem_rows).execute()
+    problems = extract_problems_structured(extracted_text)
+
+    for prob in problems:
+        problem_row = client.table("Workspace_Problems").insert({
+            "workspace_id": workspace_id,
+            "problem_number": prob["problem_number"],
+            "problem_text": prob["main_text"],
+        }).execute()
+
+        problem_id = problem_row.data[0]["id"]
+
+        if prob.get("parts"):
+            part_rows = [
+                {
+                    "problem_id": problem_id,
+                    "part_label": p["label"],
+                    "part_text": p["text"],
+                    "part_number": i + 1,
+                }
+                for i, p in enumerate(prob["parts"])
+            ]
+            client.table("Workspace_Problem_Parts").insert(part_rows).execute()
 
     return {
         "workspace": workspace.data[0],
-        "problems": problem_rows,
         "problem_count": len(problems)
     }
 
@@ -365,7 +390,12 @@ async def get_workspace(workspace_id: str, current_user=Security(get_current_use
         .order("problem_number") \
         .execute()
 
-    return {**workspace.data[0], "problems": problems.data}
+    result_problems = []
+    for p in problems.data:
+        parts = client.table("Workspace_Problem_Parts").select("*").eq("problem_id", p["id"]).order("part_number").execute()
+        result_problems.append({**p, "parts": parts.data})
+
+    return {**workspace.data[0], "problems": result_problems}
 
 
 @router.post('/workspaces/{workspace_id}/problems/{problem_id}/ai-guidance')
@@ -389,16 +419,11 @@ async def workspace_ai_guidance(
             questions_asked_in_stage += 1
 
     prompt = build_ai_prompt(
-        body.mode,
-        body.problem,
-        body.stage,
-        body.student_input,
-        history_text,
-        questions_asked_in_stage
+        body.mode, body.problem, body.stage,
+        body.student_input, history_text, questions_asked_in_stage
     )
 
     response = call_gemini(prompt)
-
     text = response.text.strip()
     text = re.sub(r'```json\n?', '', text)
     text = re.sub(r'```\n?', '', text)
@@ -413,7 +438,6 @@ async def workspace_ai_guidance(
     else:
         parsed = {"message": "Keep working through this step.", "understood": False}
 
-    # Enforce 5 questions on backend
     questions_after = questions_asked_in_stage + 1
     if questions_after < STAGE_DEFINITIONS.get(body.stage, {}).get("questions", 5):
         parsed["understood"] = False
@@ -450,6 +474,8 @@ async def get_workspace_problem(problem_id: str, current_user=Security(get_curre
 
     p = problem.data[0]
 
+    parts = client.table("Workspace_Problem_Parts").select("*").eq("problem_id", problem_id).order("part_number").execute()
+
     siblings = client.table("Workspace_Problems") \
         .select("id, problem_number, problem_text") \
         .eq("workspace_id", p["workspace_id"]) \
@@ -457,7 +483,6 @@ async def get_workspace_problem(problem_id: str, current_user=Security(get_curre
         .execute()
 
     sibling_ids = [s["id"] for s in siblings.data if s["problem_number"] < p["problem_number"]]
-
     sibling_traces = []
     for sid in sibling_ids:
         traces = client.table("Workspace_Traces") \
@@ -476,6 +501,7 @@ async def get_workspace_problem(problem_id: str, current_user=Security(get_curre
 
     return {
         **p,
+        "parts": parts.data,
         "siblings": siblings.data,
         "sibling_traces": sibling_traces
     }

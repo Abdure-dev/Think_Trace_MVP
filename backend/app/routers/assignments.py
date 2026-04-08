@@ -22,23 +22,41 @@ def call_gemini(contents):
     raise HTTPException(status_code=503, detail="AI service unavailable. Please try again.")
 
 
-def extract_problems_from_text(raw_text: str) -> list[str]:
+def extract_problems_structured(raw_text: str) -> list[dict]:
     prompt = f"""You are given academic content with LaTeX math expressions.
-Extract every distinct problem, question, or topic.
-IMPORTANT: If a problem has sub-parts (a), (b), (c), (d) etc — extract EACH sub-part as a SEPARATE item in the array, prefixed with the parent problem context.
-For example, if Problem 1 has parts (a) and (b), return them as two separate strings:
-"Problem 1(a): [full context of problem 1] — Part (a): [sub-part text]"
-"Problem 1(b): [full context of problem 1] — Part (b): [sub-part text]"
+Extract every distinct problem. For each problem, identify if it has sub-parts (a), (b), (c) etc.
 
-Return ONLY a JSON array of strings, one string per problem or sub-problem.
-CRITICAL: Preserve ALL LaTeX expressions exactly — do not modify or remove $ delimiters or LaTeX commands.
-Do not add commentary.
+Return ONLY a JSON array in this exact format:
+[
+  {{
+    "problem_number": 1,
+    "main_text": "The main problem statement without sub-parts",
+    "parts": [
+      {{"label": "a", "text": "full text of part a with context"}},
+      {{"label": "b", "text": "full text of part b with context"}}
+    ]
+  }},
+  {{
+    "problem_number": 2,
+    "main_text": "Problem with no sub-parts — full text here",
+    "parts": []
+  }}
+]
+
+RULES:
+- If a problem has sub-parts (a)(b)(c) etc, put them in the parts array
+- If a problem has no sub-parts, leave parts as empty array and put full text in main_text
+- Each part text must include enough context to be understood standalone
+- CRITICAL: Preserve ALL LaTeX — wrap math in $ delimiters
+- Convert Greek letters: Ω → $\\Omega$, Θ → $\\Theta$, Σ → $\\Sigma$, ∈ → $\\in$
+- Convert summations: ∑ → $\\sum_{{i=1}}^{{n}}$
+- Convert square roots: √n → $\\sqrt{{n}}$
+- Convert fractions to $\\frac{{a}}{{b}}$
+- Convert superscripts: n² → $n^2$
+- Return ONLY the JSON array, no commentary
 
 Content:
-{raw_text}
-
-Return format:
-["Full text of problem or sub-problem 1 with $LaTeX$ intact", "Full text of problem 2", ...]"""
+{raw_text}"""
 
     response = call_gemini(prompt)
     text = response.text.strip()
@@ -47,10 +65,11 @@ Return format:
     try:
         problems = json.loads(text)
         if isinstance(problems, list):
-            return [str(p) for p in problems]
+            return problems
     except json.JSONDecodeError:
         pass
-    return [raw_text]
+    # Fallback — treat as single problem
+    return [{"problem_number": 1, "main_text": raw_text, "parts": []}]
 
 
 def extract_text_from_pdf(file_bytes: bytes) -> str:
@@ -237,9 +256,10 @@ FULL CONVERSATION HISTORY (all stages and all previous parts):
 {history_text if history_text else "(none)"}
 
 NOTE: Messages labeled [STAGE] show which stage they came from.
-Lines starting with "---" are separators between different problem parts — use them to understand what the student already worked through.
+Lines starting with "---" are separators between different problem parts.
 Count only YOUR messages labeled [{stage.upper()}] to determine questions asked in this stage.
-Use the full history to avoid repeating questions and to build on what the student already demonstrated.
+Use the full history to avoid repeating questions and build on what the student already demonstrated.
+If this is a sub-part, reference what the student did in previous parts where relevant.
 
 STUDENT'S LATEST RESPONSE: {student_input}
 
@@ -258,7 +278,7 @@ ABSOLUTE RULES — NEVER BREAK THESE:
 7. If questions_remaining = 0 AND student has engaged genuinely → understood = true
 8. Keep your message to 2-3 sentences maximum
 9. Briefly acknowledge what the student said then ask the next targeted question
-10. If this is a sub-part (e.g. part b), reference what the student did in previous parts where relevant
+10. If this is a sub-part, reference what the student did in previous parts where relevant
 
 Respond ONLY with valid JSON:
 {{"message": "your response", "understood": false}}
@@ -303,16 +323,34 @@ async def create_assignment(
     }).execute()
 
     assignment_id = assignment.data[0]["id"]
-    problems = extract_problems_from_text(extracted_text)
-    problem_rows = [
-        {"assignment_id": assignment_id, "problem_number": i + 1, "problem_text": p}
-        for i, p in enumerate(problems)
-    ]
-    client.table("Problems").insert(problem_rows).execute()
+
+    # Extract structured problems with parts
+    problems = extract_problems_structured(extracted_text)
+
+    for prob in problems:
+        problem_row = client.table("Problems").insert({
+            "assignment_id": assignment_id,
+            "problem_number": prob["problem_number"],
+            "problem_text": prob["main_text"],
+        }).execute()
+
+        problem_id = problem_row.data[0]["id"]
+
+        # Insert parts if any
+        if prob.get("parts"):
+            part_rows = [
+                {
+                    "problem_id": problem_id,
+                    "part_label": p["label"],
+                    "part_text": p["text"],
+                    "part_number": i + 1,
+                }
+                for i, p in enumerate(prob["parts"])
+            ]
+            client.table("Problem_Parts").insert(part_rows).execute()
 
     return {
         "assignment": assignment.data[0],
-        "problems": problem_rows,
         "problem_count": len(problems)
     }
 
@@ -328,8 +366,16 @@ async def get_assignment(assignment_id: str, current_user=Security(get_current_u
     assignment = client.table("Assignments").select("*").eq("id", assignment_id).execute()
     if not assignment.data:
         raise HTTPException(status_code=404, detail="Assignment not found")
+
     problems = client.table("Problems").select("*").eq("assignment_id", assignment_id).order("problem_number").execute()
-    return {**assignment.data[0], "problems": problems.data}
+
+    # Fetch parts for each problem
+    result_problems = []
+    for p in problems.data:
+        parts = client.table("Problem_Parts").select("*").eq("problem_id", p["id"]).order("part_number").execute()
+        result_problems.append({**p, "parts": parts.data})
+
+    return {**assignment.data[0], "problems": result_problems}
 
 
 @router.post('/problems/{problem_id}/ai-guidance')
@@ -344,7 +390,6 @@ async def get_problem_ai_guidance(
 
     problem_text = problem.data[0]["problem_text"]
 
-    # Build full history with stage labels
     history_text = ""
     questions_asked_in_stage = 0
     for msg in body.conversation_history:
@@ -359,15 +404,11 @@ async def get_problem_ai_guidance(
             questions_asked_in_stage += 1
 
     prompt = build_ai_prompt(
-        problem_text,
-        body.stage,
-        body.student_input,
-        history_text,
-        questions_asked_in_stage
+        problem_text, body.stage, body.student_input,
+        history_text, questions_asked_in_stage
     )
 
     response = call_gemini(prompt)
-
     text = response.text.strip()
     text = re.sub(r'```json\n?', '', text)
     text = re.sub(r'```\n?', '', text)
@@ -388,7 +429,6 @@ async def get_problem_ai_guidance(
     else:
         parsed = {"message": "Could you explain your reasoning further?", "understood": False}
 
-    # Enforce 5 questions on backend
     questions_after = questions_asked_in_stage + 1
     if questions_after < STAGE_DEFINITIONS.get(body.stage, {}).get("questions", 5):
         parsed["understood"] = False
@@ -405,48 +445,6 @@ async def get_problem_ai_guidance(
     return parsed
 
 
-@router.post('/assignments/{assignment_id}/problems')
-async def add_problems(
-    assignment_id: str,
-    source_type: str = Form(...),
-    raw_text: str = Form(None),
-    file: UploadFile = File(None),
-    current_user=Security(get_current_user)
-):
-    if source_type not in ("pdf", "image", "text"):
-        raise HTTPException(status_code=400, detail="Invalid source_type")
-
-    extracted_text = ""
-    if source_type == "text":
-        if not raw_text:
-            raise HTTPException(status_code=400, detail="raw_text required")
-        extracted_text = raw_text
-    elif source_type == "pdf":
-        if not file:
-            raise HTTPException(status_code=400, detail="File required")
-        extracted_text = extract_text_from_pdf(await file.read())
-    elif source_type == "image":
-        if not file:
-            raise HTTPException(status_code=400, detail="File required")
-        extracted_text = extract_text_from_image(await file.read(), file.content_type)
-
-    existing = client.table("Problems") \
-        .select("problem_number") \
-        .eq("assignment_id", assignment_id) \
-        .order("problem_number", desc=True) \
-        .limit(1) \
-        .execute()
-
-    start_index = existing.data[0]["problem_number"] if existing.data else 0
-    problems = extract_problems_from_text(extracted_text)
-    rows = [
-        {"assignment_id": assignment_id, "problem_number": start_index + i + 1, "problem_text": p}
-        for i, p in enumerate(problems)
-    ]
-    client.table("Problems").insert(rows).execute()
-    return {"added_count": len(rows), "problems": rows}
-
-
 @router.get('/problems/{problem_id}')
 async def get_problem(problem_id: str, current_user=Security(get_current_user)):
     problem = client.table("Problems").select("*").eq("id", problem_id).execute()
@@ -455,16 +453,15 @@ async def get_problem(problem_id: str, current_user=Security(get_current_user)):
 
     p = problem.data[0]
 
-    # Get sibling problems from same assignment
+    parts = client.table("Problem_Parts").select("*").eq("problem_id", problem_id).order("part_number").execute()
+
     siblings = client.table("Problems") \
         .select("id, problem_number, problem_text") \
         .eq("assignment_id", p["assignment_id"]) \
         .order("problem_number") \
         .execute()
 
-    # Get traces for sibling problems completed before this one
     sibling_ids = [s["id"] for s in siblings.data if s["problem_number"] < p["problem_number"]]
-
     sibling_traces = []
     for sid in sibling_ids:
         traces = client.table("Traces") \
@@ -483,6 +480,7 @@ async def get_problem(problem_id: str, current_user=Security(get_current_user)):
 
     return {
         **p,
+        "parts": parts.data,
         "siblings": siblings.data,
         "sibling_traces": sibling_traces
     }
