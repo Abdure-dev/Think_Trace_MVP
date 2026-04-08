@@ -9,11 +9,13 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.101.1",
     "katex": "^0.16.45",
     "next": "16.2.1",
     "react": "19.2.4",
     "react-dom": "19.2.4",
-    "react-katex": "^3.1.0"
+    "react-katex": "^3.1.0",
+    "react-mathquill": "^1.0.4"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

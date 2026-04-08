@@ -154,7 +154,8 @@ export default function Get_single_assignment({
     }
   }
   function renderMath(text: string) {
-    const parts = text.split(/(\$\$[\s\S]+?\$\$|\$[^$]+?\$)/);
+    const cleaned = text.replace(/\\\\/g, "\\");
+    const parts = cleaned.split(/(\$\$[\s\S]+?\$\$|\$[^$]+?\$)/);
     return parts.map((part, i) => {
       if (part.startsWith("$$")) {
         return <BlockMath key={i} math={part.slice(2, -2)} />;
@@ -298,7 +299,7 @@ export default function Get_single_assignment({
                     >
                       {msg.role === "student" ? "You" : "ThinkTrace AI"}
                     </p>
-                    <p>{msg.content}</p>
+                    <div>{renderMath(msg.content || "")}</div>
                   </div>
                 ))}
 

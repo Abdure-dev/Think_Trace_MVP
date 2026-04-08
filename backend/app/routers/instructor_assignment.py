@@ -23,7 +23,8 @@ async def extract_pdf(
 For each problem:
 - Convert any math equations to LaTeX format (wrap in $ for inline, $$ for block)
 - Preserve the problem numbering
-- Keep all relevant context and sub-parts
+- If a problem has sub-parts (a), (b), (c) etc — separate them into individual sub_parts array
+- Keep all relevant context
 
 Return ONLY valid JSON in this exact format:
 {
@@ -31,10 +32,16 @@ Return ONLY valid JSON in this exact format:
     {
       "number": 1,
       "title": "short title for the problem",
-      "description": "full problem text with LaTeX math"
+      "description": "main problem description without sub-parts",
+      "sub_parts": [
+        {"label": "a", "content": "sub-part a content with LaTeX"},
+        {"label": "b", "content": "sub-part b content with LaTeX"}
+      ]
     }
   ]
-}"""
+}
+
+If a problem has no sub-parts, return an empty array for sub_parts."""
 
     response = client_ai.models.generate_content(
         model="models/gemini-2.5-flash",

@@ -56,7 +56,21 @@ Rules:
 - If 5 questions have been answered satisfactorily AND student shows genuine understanding → set understood to true, congratulate, NO more questions
 - Never give the answer directly
 - Keep message to 2-3 sentences maximum
-- Return ONLY the JSON, no other text"""
+- Return ONLY the JSON, no other text
+- Write math in plain text, NOT LaTeX — for example write "f(n) = O(g(n))" not "$f(n) = O(g(n))$"
+- Your message is a question, not a math display — keep it conversational
+CRITICAL JSON FORMATTING RULES:
+- Return ONLY valid JSON
+- In JSON strings, LaTeX backslashes MUST be double-escaped: write \\\\frac not \\frac
+- Example: "What is \\\\frac{{1}}{{2}}?" not "What is \\frac{1}{2}?"
+- All LaTeX commands must use double backslashes in JSON strings
+- Always wrap ALL mathematical expressions in $ delimiters — write $X^1$ not X^1, write $F_j$ not F_j
+- Every variable, equation, matrix, or formula must be inside $ or $$ delimiters
+- For matrices, use simple notation like [[a, b], [c, d]] instead of \\begin{{pmatrix}}
+- Only use LaTeX for simple inline math like $F_0$, $X^k$, $\frac{{a}}{{b}}$
+- Avoid complex multi-line LaTeX environments like pmatrix, bmatrix, align
+
+"""
 
     response = client_ai.models.generate_content(
         model="models/gemini-2.5-flash",
@@ -69,8 +83,25 @@ Rules:
     text = response.text.strip()
     text = re.sub(r'```json\n?', '', text)
     text = re.sub(r'```\n?', '', text)
-    
-    parsed = json.loads(text)
+
+    # Fix single backslashes that aren't valid JSON escapes
+    text = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', text)
+
+    match = re.search(r'\{.*\}', text, re.DOTALL)
+    if match:
+        json_str = match.group()
+        try:
+            parsed = json.loads(json_str)
+        except json.JSONDecodeError:
+            # Last resort — extract message manually
+            msg_match = re.search(r'"message"\s*:\s*"(.*?)"(?=\s*,\s*"understood")', json_str, re.DOTALL)
+            understood_match = re.search(r'"understood"\s*:\s*(true|false)', json_str)
+            parsed = {
+            "message": msg_match.group(1) if msg_match else "Could you explain further?",
+            "understood": understood_match.group(1) == "true" if understood_match else False
+        }
+    else:
+        parsed = {"message": "Could you explain your reasoning further?", "understood": False}
 
    # Log AI interaction
     client.table("AI_Interactions").insert({
