@@ -3,6 +3,7 @@
 import { useRouter, useParams, useSearchParams } from "next/navigation";
 import { useEffect, useState, Suspense } from "react";
 import { InlineMath, BlockMath } from "react-katex";
+import MathInput from "@/components/MathInput";
 
 type Part = {
   id: string;
@@ -107,12 +108,10 @@ function WorkspaceProblemInner() {
   const currentIndex = stages.indexOf(stage);
   const canContinue = timerDone && understood;
   const modeInfo = MODES[mode] || MODES.guided;
-
   const currentPart =
     problem?.parts && problem.parts.length > 0
       ? problem.parts[currentPartIndex]
       : null;
-
   const activeProblemText = currentPart
     ? currentPart.part_text
     : problem?.problem_text || "";
@@ -143,7 +142,6 @@ function WorkspaceProblemInner() {
       const data = await res.json();
       setProblem(data);
 
-      // Seed from sibling traces
       if (data.sibling_traces && data.sibling_traces.length > 0) {
         const seeded: ConversationMessage[] = [];
         for (const sibling of data.sibling_traces) {
@@ -198,7 +196,6 @@ function WorkspaceProblemInner() {
 
     setSubmitting(true);
 
-    // Save trace
     fetch(
       `${process.env.NEXT_PUBLIC_API_URL}/workspace-problems/${problem_id}/traces`,
       {
@@ -256,7 +253,6 @@ function WorkspaceProblemInner() {
       setUnderstood(false);
       setConversing(false);
     } else {
-      // Last stage complete — mark part as done
       setPartComplete(true);
     }
   }
@@ -265,8 +261,6 @@ function WorkspaceProblemInner() {
     if (!isLastPart) {
       const nextPartIndex = currentPartIndex + 1;
       setCurrentPartIndex(nextPartIndex);
-
-      // Add separator to history
       const nextPart = problem!.parts[nextPartIndex];
       setConversationHistory((prev) => [
         ...prev,
@@ -276,8 +270,6 @@ function WorkspaceProblemInner() {
           stage: "understand",
         },
       ]);
-
-      // Reset stage state
       setStage("understand");
       setStudentInput("");
       setAiResponse("");
@@ -307,11 +299,6 @@ function WorkspaceProblemInner() {
       </div>
     );
 
-  const currentStageMessages = conversationHistory.filter(
-    (msg) => msg.stage === stage && msg.role !== "system"
-  );
-
-  // All parts complete screen
   if (allPartsComplete) {
     return (
       <div className="min-h-screen bg-[#f8f9fc] flex items-center justify-center">
@@ -338,6 +325,10 @@ function WorkspaceProblemInner() {
     );
   }
 
+  const currentStageMessages = conversationHistory.filter(
+    (msg) => msg.stage === stage && msg.role !== "system"
+  );
+
   return (
     <div className="min-h-screen flex bg-[#f8f9fc]">
       {/* Sidebar */}
@@ -358,7 +349,6 @@ function WorkspaceProblemInner() {
           </span>
         </div>
 
-        {/* Parts progress */}
         {hasMultipleParts && (
           <div className="mb-6">
             <p className="text-blue-300 text-xs uppercase tracking-wide font-semibold mb-2">
@@ -391,7 +381,6 @@ function WorkspaceProblemInner() {
           </div>
         )}
 
-        {/* Stage progress */}
         <p className="text-blue-300 text-xs uppercase tracking-wide font-semibold mb-4">
           Stages
         </p>
@@ -426,6 +415,21 @@ function WorkspaceProblemInner() {
 
       {/* Main */}
       <div className="flex-1 p-10 overflow-y-auto">
+        {problem?.sibling_traces && problem.sibling_traces.length > 0 && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 mb-4">
+            <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-1">
+              Context from previous parts
+            </p>
+            <p className="text-sm text-amber-800">
+              ThinkTrace AI has full context from{" "}
+              {problem.sibling_traces
+                .map((s) => `Problem ${s.problem_number}`)
+                .join(", ")}
+              .
+            </p>
+          </div>
+        )}
+
         {/* Problem card */}
         <div
           className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 mb-6 select-none"
@@ -439,7 +443,6 @@ function WorkspaceProblemInner() {
           >
             ← Back
           </button>
-
           <div className="flex items-center gap-3 mb-3">
             <h1 className="text-xl font-bold text-gray-800">
               Problem {problem?.problem_number}
@@ -450,21 +453,17 @@ function WorkspaceProblemInner() {
               </span>
             )}
           </div>
-
-          {/* Show main problem text if has parts */}
           {problem?.parts && problem.parts.length > 0 && (
             <div className="text-gray-400 text-sm mb-3 pb-3 border-b border-gray-100">
               {renderMath(problem.problem_text)}
             </div>
           )}
-
-          {/* Current part or full problem */}
           <div className="text-gray-700 leading-relaxed font-medium">
             {renderMath(activeProblemText)}
           </div>
         </div>
 
-        {/* Part complete — show next part button */}
+        {/* Part complete banner */}
         {partComplete && !allPartsComplete && (
           <div className="bg-green-50 border border-green-200 rounded-2xl p-6 mb-6 flex items-center justify-between">
             <div>
@@ -493,7 +492,7 @@ function WorkspaceProblemInner() {
           </div>
         )}
 
-        {/* Stage workspace — hidden when part complete */}
+        {/* Stage workspace */}
         {!partComplete && (
           <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
             <div className="flex items-center justify-between mb-3">
@@ -515,7 +514,6 @@ function WorkspaceProblemInner() {
               </div>
             </div>
 
-            {/* Stage objective */}
             <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 mb-4">
               <p className="text-xs font-semibold text-blue-600 uppercase tracking-wide mb-1">
                 Objective
@@ -523,19 +521,15 @@ function WorkspaceProblemInner() {
               <p className="text-sm text-blue-800">{STAGE_OBJECTIVES[stage]}</p>
             </div>
 
-            {/* Initial input */}
             {!conversing && (
-              <textarea
+              <MathInput
                 value={studentInput}
-                onChange={(e) => setStudentInput(e.target.value)}
-                onPaste={(e) => e.preventDefault()}
+                onChange={setStudentInput}
                 placeholder={`Write your ${stage} here...`}
-                className="w-full h-40 p-4 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 resize-none text-gray-700"
-                style={{ "--tw-ring-color": modeInfo.color } as any}
+                accentColor={modeInfo.color}
               />
             )}
 
-            {/* Conversation */}
             {currentStageMessages.length > 0 && (
               <div className="mt-4 flex flex-col gap-3">
                 {currentStageMessages.map((msg, index) => (
@@ -580,7 +574,6 @@ function WorkspaceProblemInner() {
               </div>
             )}
 
-            {/* Response input */}
             {conversing && !understood && (
               <div className="mt-4">
                 <p
@@ -589,13 +582,12 @@ function WorkspaceProblemInner() {
                 >
                   Your response:
                 </p>
-                <textarea
+                <MathInput
                   value={aiResponse}
-                  onChange={(e) => setAiResponse(e.target.value)}
-                  onPaste={(e) => e.preventDefault()}
+                  onChange={setAiResponse}
                   placeholder="Respond here..."
-                  className="w-full h-24 p-4 border-2 rounded-xl focus:outline-none resize-none text-gray-700"
-                  style={{ borderColor: modeInfo.color }}
+                  height="h-24"
+                  accentColor={modeInfo.color}
                 />
               </div>
             )}
@@ -624,7 +616,7 @@ function WorkspaceProblemInner() {
                     ? isLastPart
                       ? "Complete Problem ✓"
                       : `Complete Part (${currentPart?.part_label}) ✓`
-                    : "Continue to next stage →"
+                    : "Continue →"
                   : conversing && !understood
                   ? "Send →"
                   : "Submit →"}

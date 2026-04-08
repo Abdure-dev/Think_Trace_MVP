@@ -3,13 +3,22 @@
 import { useRouter, useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { InlineMath, BlockMath } from "react-katex";
+import MathInput from "@/components/MathInput";
 
 type Problem = {
   id: string;
   assignment_id?: string;
   problem_number: number;
   problem_text: string;
+  parts?: Part[];
   sibling_traces?: SiblingTrace[];
+};
+
+type Part = {
+  id: string;
+  part_label: string;
+  part_text: string;
+  part_number: number;
 };
 
 type SiblingTrace = {
@@ -52,6 +61,7 @@ export default function ProblemWorkspacePage() {
   const problem_id = params.problem_id as string;
 
   const [stage, setStage] = useState("understand");
+  const [currentPartIndex, setCurrentPartIndex] = useState(0);
   const [studentInput, setStudentInput] = useState("");
   const [problem, setProblem] = useState<Problem | null>(null);
   const [understood, setUnderstood] = useState(false);
@@ -64,6 +74,8 @@ export default function ProblemWorkspacePage() {
   >([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [partComplete, setPartComplete] = useState(false);
+  const [allPartsComplete, setAllPartsComplete] = useState(false);
 
   const stages = [
     "understand",
@@ -84,6 +96,17 @@ export default function ProblemWorkspacePage() {
 
   const currentIndex = stages.indexOf(stage);
   const canContinue = timerDone && understood;
+  const currentPart =
+    problem?.parts && problem.parts.length > 0
+      ? problem.parts[currentPartIndex]
+      : null;
+  const activeProblemText = currentPart
+    ? currentPart.part_text
+    : problem?.problem_text || "";
+  const hasMultipleParts = (problem?.parts?.length || 0) > 1;
+  const isLastPart =
+    !problem?.parts?.length || currentPartIndex >= problem.parts.length - 1;
+  const isLastStage = currentIndex === stages.length - 1;
 
   useEffect(() => {
     async function fetchProblem() {
@@ -108,13 +131,12 @@ export default function ProblemWorkspacePage() {
       const data = await res.json();
       setProblem(data);
 
-      // Seed conversation history from sibling traces
       if (data.sibling_traces && data.sibling_traces.length > 0) {
         const seeded: ConversationMessage[] = [];
         for (const sibling of data.sibling_traces) {
           seeded.push({
             role: "system",
-            content: `--- Previous part: Problem ${sibling.problem_number} — ${sibling.problem_text} ---`,
+            content: `--- Previous problem ${sibling.problem_number}: ${sibling.problem_text} ---`,
             stage: "understand",
           });
           for (const trace of sibling.traces) {
@@ -149,7 +171,7 @@ export default function ProblemWorkspacePage() {
       });
     }, 1000);
     return () => clearInterval(timer);
-  }, [stage]);
+  }, [stage, currentPartIndex]);
 
   const formatTime = (seconds: number) => {
     const m = Math.floor(seconds / 60);
@@ -166,7 +188,6 @@ export default function ProblemWorkspacePage() {
 
     setSubmitting(true);
 
-    // Save trace (don't block on failure)
     fetch(`${process.env.NEXT_PUBLIC_API_URL}/problems/${problem_id}/traces`, {
       method: "POST",
       headers: {
@@ -180,7 +201,6 @@ export default function ProblemWorkspacePage() {
       }),
     }).catch(() => {});
 
-    // Get AI guidance with full history
     const guidanceRes = await fetch(
       `${process.env.NEXT_PUBLIC_API_URL}/problems/${problem_id}/ai-guidance`,
       {
@@ -192,7 +212,7 @@ export default function ProblemWorkspacePage() {
         body: JSON.stringify({
           stage,
           student_input: inputToSend,
-          problem: problem.problem_text,
+          problem: activeProblemText,
           conversation_history: conversationHistory,
         }),
       }
@@ -213,14 +233,39 @@ export default function ProblemWorkspacePage() {
     setSubmitting(false);
   }
 
-  function handleContinue() {
+  function handleContinueStage() {
     if (currentIndex < stages.length - 1) {
       setStage(stages[currentIndex + 1]);
       setStudentInput("");
       setAiResponse("");
       setUnderstood(false);
       setConversing(false);
-      // Keep conversationHistory — full history carries across stages
+    } else {
+      setPartComplete(true);
+    }
+  }
+
+  function handleNextPart() {
+    if (!isLastPart) {
+      const nextPartIndex = currentPartIndex + 1;
+      setCurrentPartIndex(nextPartIndex);
+      const nextPart = problem!.parts![nextPartIndex];
+      setConversationHistory((prev) => [
+        ...prev,
+        {
+          role: "system",
+          content: `--- Moving to Part (${nextPart.part_label}): ${nextPart.part_text} ---`,
+          stage: "understand",
+        },
+      ]);
+      setStage("understand");
+      setStudentInput("");
+      setAiResponse("");
+      setUnderstood(false);
+      setConversing(false);
+      setPartComplete(false);
+    } else {
+      setAllPartsComplete(true);
     }
   }
 
@@ -243,6 +288,34 @@ export default function ProblemWorkspacePage() {
     );
   }
 
+  if (allPartsComplete) {
+    return (
+      <div className="min-h-screen bg-[#f8f9fc] flex items-center justify-center">
+        <div className="bg-white rounded-2xl p-10 shadow-sm border border-gray-100 text-center max-w-md">
+          <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-4">
+            <span className="text-green-600 text-2xl">✓</span>
+          </div>
+          <h2 className="text-2xl font-bold text-gray-800 mb-2">
+            Problem Complete!
+          </h2>
+          <p className="text-gray-400 mb-6">
+            You've worked through all {problem?.parts?.length} parts with full
+            reasoning traces.
+          </p>
+          <button
+            onClick={() => router.back()}
+            className="px-6 py-3 rounded-xl text-white font-semibold hover:opacity-90 transition"
+            style={{
+              background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+            }}
+          >
+            Back to Problems
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   const currentStageMessages = conversationHistory.filter(
     (msg) => msg.stage === stage && msg.role !== "system"
   );
@@ -250,13 +323,47 @@ export default function ProblemWorkspacePage() {
   return (
     <div className="min-h-screen flex bg-[#f8f9fc]">
       {/* Sidebar */}
-      <div className="w-64 min-h-screen p-6 bg-[#1e2a4a]">
+      <div className="w-64 min-h-screen p-6 bg-[#1e2a4a] flex flex-col">
         <div className="flex items-center gap-3 mb-10">
           <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-gradient-to-br from-[#667eea] to-[#764ba2]">
             <span className="text-white font-bold text-sm">T</span>
           </div>
           <span className="text-white font-bold text-lg">ThinkTrace</span>
         </div>
+
+        {/* Parts progress */}
+        {hasMultipleParts && (
+          <div className="mb-6">
+            <p className="text-blue-300 text-xs uppercase tracking-wide font-semibold mb-2">
+              Parts
+            </p>
+            <div className="flex gap-2 flex-wrap">
+              {problem!.parts!.map((part, i) => (
+                <div
+                  key={part.id}
+                  className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold"
+                  style={{
+                    background:
+                      i < currentPartIndex
+                        ? "#4ade80"
+                        : i === currentPartIndex
+                        ? "white"
+                        : "rgba(255,255,255,0.2)",
+                    color:
+                      i < currentPartIndex
+                        ? "white"
+                        : i === currentPartIndex
+                        ? "#1e2a4a"
+                        : "rgba(255,255,255,0.5)",
+                  }}
+                >
+                  {i < currentPartIndex ? "✓" : `(${part.part_label})`}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <p className="text-blue-300 text-xs uppercase tracking-wide font-semibold mb-4">
           Stages
         </p>
@@ -301,8 +408,8 @@ export default function ProblemWorkspacePage() {
               ThinkTrace AI has full context from{" "}
               {problem.sibling_traces
                 .map((s) => `Problem ${s.problem_number}`)
-                .join(", ")}{" "}
-              to guide you through this part.
+                .join(", ")}
+              .
             </p>
           </div>
         )}
@@ -320,148 +427,191 @@ export default function ProblemWorkspacePage() {
           >
             ← Back
           </button>
-          <h1 className="text-xl font-bold text-gray-800 mb-2">
-            Problem {problem?.problem_number}
-          </h1>
-          <div className="text-gray-600 leading-relaxed">
-            {renderMath(problem?.problem_text || "")}
+          <div className="flex items-center gap-3 mb-3">
+            <h1 className="text-xl font-bold text-gray-800">
+              Problem {problem?.problem_number}
+            </h1>
+            {currentPart && (
+              <span className="text-sm font-semibold px-3 py-1 rounded-full bg-gray-100 text-gray-600">
+                Part ({currentPart.part_label})
+              </span>
+            )}
+          </div>
+          {problem?.parts && problem.parts.length > 0 && (
+            <div className="text-gray-400 text-sm mb-3 pb-3 border-b border-gray-100">
+              {renderMath(problem.problem_text)}
+            </div>
+          )}
+          <div className="text-gray-700 leading-relaxed font-medium">
+            {renderMath(activeProblemText)}
           </div>
         </div>
 
-        {/* Stage workspace */}
-        <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-lg font-bold text-gray-800 capitalize">
-              {stage}
-            </h2>
-            <div
-              className={`flex items-center gap-2 px-3 py-1 rounded-full text-sm font-semibold ${
-                timerDone
-                  ? "bg-green-100 text-green-600"
-                  : timeLeft < 60
-                  ? "bg-red-100 text-red-500"
-                  : "bg-orange-100 text-orange-500"
-              }`}
-            >
-              {timerDone
-                ? "✓ Time complete"
-                : `⏱ ${formatTime(timeLeft)} remaining`}
-            </div>
-          </div>
-
-          {/* Stage objective */}
-          <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 mb-4">
-            <p className="text-xs font-semibold text-blue-600 uppercase tracking-wide mb-1">
-              Objective
-            </p>
-            <p className="text-sm text-blue-800">{STAGE_OBJECTIVES[stage]}</p>
-          </div>
-
-          {/* Initial input */}
-          {!conversing && (
-            <textarea
-              value={studentInput}
-              onChange={(e) => setStudentInput(e.target.value)}
-              onPaste={(e) => e.preventDefault()}
-              onCopy={(e) => e.preventDefault()}
-              onContextMenu={(e) => e.preventDefault()}
-              placeholder={`Write your ${stage} here...`}
-              className="w-full h-40 p-4 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-400 resize-none text-gray-700"
-            />
-          )}
-
-          {/* Conversation for current stage */}
-          {currentStageMessages.length > 0 && (
-            <div className="mt-4 flex flex-col gap-3">
-              {currentStageMessages.map((msg, index) => (
-                <div
-                  key={index}
-                  className={`p-3 rounded-xl text-sm ${
-                    msg.role === "student"
-                      ? "bg-gray-50 border border-gray-200 text-gray-700 ml-8"
-                      : "border border-purple-200 text-gray-700 mr-8 select-none"
-                  }`}
-                  style={
-                    msg.role === "ai"
-                      ? { backgroundColor: "#f5f3ff", userSelect: "none" }
-                      : {}
-                  }
-                  onCopy={(e) => e.preventDefault()}
-                  onContextMenu={(e) => e.preventDefault()}
-                >
-                  <p
-                    className="text-xs font-semibold mb-1"
-                    style={{
-                      color: msg.role === "student" ? "#6b7280" : "#8b5cf6",
-                    }}
-                  >
-                    {msg.role === "student" ? "You" : "ThinkTrace AI"}
-                  </p>
-                  <div>{renderMath(msg.content || "")}</div>
-                </div>
-              ))}
-
-              {understood && timerDone && (
-                <p className="text-green-500 text-sm font-medium mt-1">
-                  ✓ Ready to move to next stage
-                </p>
-              )}
-              {understood && !timerDone && (
-                <p className="text-orange-500 text-sm font-medium mt-1">
-                  ✓ Stage complete — waiting for timer
-                </p>
-              )}
-            </div>
-          )}
-
-          {/* Response input */}
-          {conversing && !understood && (
-            <div className="mt-4">
-              <p className="text-sm font-medium text-purple-600 mb-2">
-                Your response to ThinkTrace AI:
+        {/* Part complete banner */}
+        {partComplete && !allPartsComplete && (
+          <div className="bg-green-50 border border-green-200 rounded-2xl p-6 mb-6 flex items-center justify-between">
+            <div>
+              <p className="font-bold text-green-800 text-lg">
+                Part ({currentPart?.part_label}) Complete! 🎉
               </p>
-              <textarea
-                value={aiResponse}
-                onChange={(e) => setAiResponse(e.target.value)}
-                onPaste={(e) => e.preventDefault()}
-                onCopy={(e) => e.preventDefault()}
-                onContextMenu={(e) => e.preventDefault()}
-                placeholder="Respond here..."
-                className="w-full h-24 p-4 border-2 border-purple-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-400 resize-none text-gray-700"
-              />
+              <p className="text-green-600 text-sm mt-1">
+                {isLastPart
+                  ? "You've completed all parts of this problem."
+                  : `Ready to move to Part (${
+                      problem?.parts![currentPartIndex + 1]?.part_label
+                    })`}
+              </p>
             </div>
-          )}
-
-          <div className="flex justify-between items-center mt-4">
-            <p className="text-sm text-gray-400">
-              Stage {currentIndex + 1} of {stages.length}
-            </p>
             <button
-              onClick={canContinue ? handleContinue : handleSubmit}
-              disabled={
-                submitting ||
-                (!canContinue &&
-                  (conversing
-                    ? aiResponse.trim() === ""
-                    : studentInput.trim() === ""))
-              }
-              className="text-white px-8 py-3 rounded-xl font-semibold transition disabled:opacity-40 hover:opacity-90"
+              onClick={handleNextPart}
+              className="px-6 py-3 rounded-xl text-white font-semibold hover:opacity-90 transition"
               style={{
                 background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
               }}
             >
-              {submitting
-                ? "..."
-                : canContinue
-                ? currentIndex < stages.length - 1
-                  ? "Continue to next stage →"
-                  : "Complete Problem"
-                : conversing && !understood
-                ? "Send Response →"
-                : "Submit →"}
+              {isLastPart
+                ? "Finish Problem"
+                : `Next Part (${
+                    problem?.parts![currentPartIndex + 1]?.part_label
+                  }) →`}
             </button>
           </div>
-        </div>
+        )}
+
+        {/* Stage workspace */}
+        {!partComplete && (
+          <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-lg font-bold text-gray-800 capitalize">
+                {stage}
+              </h2>
+              <div
+                className={`flex items-center gap-2 px-3 py-1 rounded-full text-sm font-semibold ${
+                  timerDone
+                    ? "bg-green-100 text-green-600"
+                    : timeLeft < 60
+                    ? "bg-red-100 text-red-500"
+                    : "bg-orange-100 text-orange-500"
+                }`}
+              >
+                {timerDone
+                  ? "✓ Time complete"
+                  : `⏱ ${formatTime(timeLeft)} remaining`}
+              </div>
+            </div>
+
+            {/* Stage objective */}
+            <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 mb-4">
+              <p className="text-xs font-semibold text-blue-600 uppercase tracking-wide mb-1">
+                Objective
+              </p>
+              <p className="text-sm text-blue-800">{STAGE_OBJECTIVES[stage]}</p>
+            </div>
+
+            {/* Initial input with math toolbar */}
+            {!conversing && (
+              <MathInput
+                value={studentInput}
+                onChange={setStudentInput}
+                placeholder={`Write your ${stage} here...`}
+                accentColor="#667eea"
+              />
+            )}
+
+            {/* Conversation */}
+            {currentStageMessages.length > 0 && (
+              <div className="mt-4 flex flex-col gap-3">
+                {currentStageMessages.map((msg, index) => (
+                  <div
+                    key={index}
+                    className={`p-3 rounded-xl text-sm ${
+                      msg.role === "student"
+                        ? "bg-gray-50 border border-gray-200 text-gray-700 ml-8"
+                        : "border border-purple-200 text-gray-700 mr-8 select-none"
+                    }`}
+                    style={
+                      msg.role === "ai"
+                        ? { backgroundColor: "#f5f3ff", userSelect: "none" }
+                        : {}
+                    }
+                    onCopy={(e) => e.preventDefault()}
+                    onContextMenu={(e) => e.preventDefault()}
+                  >
+                    <p
+                      className="text-xs font-semibold mb-1"
+                      style={{
+                        color: msg.role === "student" ? "#6b7280" : "#8b5cf6",
+                      }}
+                    >
+                      {msg.role === "student" ? "You" : "ThinkTrace AI"}
+                    </p>
+                    <div>{renderMath(msg.content || "")}</div>
+                  </div>
+                ))}
+                {understood && timerDone && (
+                  <p className="text-green-500 text-sm font-medium mt-1">
+                    ✓ Ready to move to next stage
+                  </p>
+                )}
+                {understood && !timerDone && (
+                  <p className="text-orange-500 text-sm font-medium mt-1">
+                    ✓ Stage complete — waiting for timer
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* AI response input with math toolbar */}
+            {conversing && !understood && (
+              <div className="mt-4">
+                <p className="text-sm font-medium text-purple-600 mb-2">
+                  Your response to ThinkTrace AI:
+                </p>
+                <MathInput
+                  value={aiResponse}
+                  onChange={setAiResponse}
+                  placeholder="Respond here..."
+                  height="h-24"
+                  accentColor="#667eea"
+                />
+              </div>
+            )}
+
+            <div className="flex justify-between items-center mt-4">
+              <p className="text-sm text-gray-400">
+                {hasMultipleParts && `Part (${currentPart?.part_label}) · `}
+                Stage {currentIndex + 1} of {stages.length}
+              </p>
+              <button
+                onClick={canContinue ? handleContinueStage : handleSubmit}
+                disabled={
+                  submitting ||
+                  (!canContinue &&
+                    (conversing
+                      ? aiResponse.trim() === ""
+                      : studentInput.trim() === ""))
+                }
+                className="text-white px-8 py-3 rounded-xl font-semibold transition disabled:opacity-40 hover:opacity-90"
+                style={{
+                  background:
+                    "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                }}
+              >
+                {submitting
+                  ? "..."
+                  : canContinue
+                  ? isLastStage
+                    ? isLastPart
+                      ? "Complete Problem ✓"
+                      : `Complete Part (${currentPart?.part_label}) ✓`
+                    : "Continue to next stage →"
+                  : conversing && !understood
+                  ? "Send Response →"
+                  : "Submit →"}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
