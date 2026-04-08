@@ -9,6 +9,21 @@ type Problem = {
   workspace_id: string;
   problem_number: number;
   problem_text: string;
+  sibling_traces?: SiblingTrace[];
+};
+
+type SiblingTrace = {
+  problem_id: string;
+  problem_number: number;
+  problem_text: string;
+  traces: TraceRecord[];
+};
+
+type TraceRecord = {
+  id: string;
+  stage: string;
+  content: string;
+  created_at: string;
 };
 
 type ConversationMessage = {
@@ -21,6 +36,20 @@ const MODES = {
   deep_focus: { label: "Deep Focus", color: "#1e2a4a" },
   guided: { label: "Guided", color: "#800000" },
   open: { label: "Open", color: "#2d6a4f" },
+};
+
+const STAGE_OBJECTIVES: Record<string, string> = {
+  understand:
+    "Restate the problem in your own words. Identify what is given, what you need to find, and any constraints. Do NOT solve yet.",
+  concept:
+    "Identify the core concepts, theorems, or techniques that apply. Explain WHY each one is relevant to this specific problem.",
+  plan: "Write a numbered step-by-step plan for how you will solve this. Be specific. Do NOT start solving yet.",
+  attempt:
+    "Execute your plan step by step. Show ALL your work. Explain every step as you go. Do not skip anything.",
+  critique:
+    "Examine your solution critically. What could go wrong? What edge cases exist? Is there a better approach?",
+  reflection:
+    "What did you learn? What is the key insight? How does this connect to what you already know? Be specific.",
 };
 
 function WorkspaceProblemInner() {
@@ -44,8 +73,8 @@ function WorkspaceProblemInner() {
   const [conversationHistory, setConversationHistory] = useState<
     ConversationMessage[]
   >([]);
-  const [aiGuidance, setAiGuidance] = useState("");
   const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
 
   const stages = [
     "understand",
@@ -78,7 +107,9 @@ function WorkspaceProblemInner() {
 
       const res = await fetch(
         `${process.env.NEXT_PUBLIC_API_URL}/workspace-problems/${problem_id}`,
-        { headers: { Authorization: `Bearer ${token}` } }
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
       );
 
       if (!res.ok) {
@@ -87,6 +118,29 @@ function WorkspaceProblemInner() {
       }
       const data = await res.json();
       setProblem(data);
+
+      // Seed conversation history from sibling traces
+      if (data.sibling_traces && data.sibling_traces.length > 0) {
+        const seeded: ConversationMessage[] = [];
+        for (const sibling of data.sibling_traces) {
+          seeded.push({
+            role: "system",
+            content: `--- Previous part: Problem ${sibling.problem_number} — ${sibling.problem_text} ---`,
+            stage: "understand",
+          });
+          for (const trace of sibling.traces) {
+            if (trace.content) {
+              seeded.push({
+                role: "student",
+                content: trace.content,
+                stage: trace.stage,
+              });
+            }
+          }
+        }
+        setConversationHistory(seeded);
+      }
+
       setLoading(false);
     }
     fetchProblem();
@@ -113,10 +167,31 @@ function WorkspaceProblemInner() {
 
   async function handleSubmit() {
     const token = localStorage.getItem("token");
-    if (!token || !problem) return;
+    if (!token || !problem || submitting) return;
 
     const inputToSend = conversing ? aiResponse : studentInput;
+    if (!inputToSend.trim()) return;
 
+    setSubmitting(true);
+
+    // Save workspace trace
+    fetch(
+      `${process.env.NEXT_PUBLIC_API_URL}/workspace-problems/${problem_id}/traces`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          stage,
+          action: "text_submission",
+          content: inputToSend,
+        }),
+      }
+    ).catch(() => {});
+
+    // Get AI guidance with full history
     const guidanceRes = await fetch(
       `${process.env.NEXT_PUBLIC_API_URL}/workspaces/${problem.workspace_id}/problems/${problem_id}/ai-guidance`,
       {
@@ -143,11 +218,11 @@ function WorkspaceProblemInner() {
       { role: "ai", content: guidanceData.message, stage },
     ]);
 
-    setAiGuidance(guidanceData.message);
     setUnderstood(guidanceData.understood);
     setConversing(true);
     setAiResponse("");
     if (!conversing) setStudentInput("");
+    setSubmitting(false);
   }
 
   function handleContinue() {
@@ -157,7 +232,7 @@ function WorkspaceProblemInner() {
       setAiResponse("");
       setUnderstood(false);
       setConversing(false);
-      setAiGuidance("");
+      // Keep conversationHistory — full history carries across stages
     }
   }
 
@@ -179,6 +254,10 @@ function WorkspaceProblemInner() {
       </div>
     );
 
+  const currentStageMessages = conversationHistory.filter(
+    (msg) => msg.stage === stage && msg.role !== "system"
+  );
+
   return (
     <div className="min-h-screen flex bg-[#f8f9fc]">
       {/* Sidebar */}
@@ -189,7 +268,6 @@ function WorkspaceProblemInner() {
           </div>
           <span className="text-white font-bold text-lg">ThinkTrace</span>
         </div>
-
         <div className="mb-6">
           <span
             className="text-xs font-semibold px-2.5 py-1 rounded-full text-white"
@@ -198,7 +276,6 @@ function WorkspaceProblemInner() {
             {modeInfo.label} mode
           </span>
         </div>
-
         <p className="text-blue-300 text-xs uppercase tracking-wide font-semibold mb-4">
           Stages
         </p>
@@ -232,9 +309,27 @@ function WorkspaceProblemInner() {
       </div>
 
       {/* Main */}
-      <div className="flex-1 p-10">
+      <div className="flex-1 p-10 overflow-y-auto">
+        {/* Sibling context banner */}
+        {problem?.sibling_traces && problem.sibling_traces.length > 0 && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 mb-4">
+            <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-1">
+              Context from previous parts
+            </p>
+            <p className="text-sm text-amber-800">
+              ThinkTrace AI has full context from{" "}
+              {problem.sibling_traces
+                .map((s) => `Problem ${s.problem_number}`)
+                .join(", ")}{" "}
+              to guide you through this part.
+            </p>
+          </div>
+        )}
+
+        {/* Problem card */}
         <div
           className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 mb-6 select-none"
+          style={{ userSelect: "none" }}
           onCopy={(e) => e.preventDefault()}
           onContextMenu={(e) => e.preventDefault()}
         >
@@ -247,13 +342,14 @@ function WorkspaceProblemInner() {
           <h1 className="text-xl font-bold text-gray-800 mb-2">
             Problem {problem?.problem_number}
           </h1>
-          <div className="text-gray-600">
+          <div className="text-gray-600 leading-relaxed">
             {renderMath(problem?.problem_text || "")}
           </div>
         </div>
 
+        {/* Stage workspace */}
         <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-          <div className="flex items-center justify-between mb-1">
+          <div className="flex items-center justify-between mb-3">
             <h2 className="text-lg font-bold text-gray-800 capitalize">
               {stage}
             </h2>
@@ -272,8 +368,15 @@ function WorkspaceProblemInner() {
             </div>
           </div>
 
-          <p className="text-gray-400 text-sm mb-4">Write your {stage} below</p>
+          {/* Stage objective */}
+          <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 mb-4">
+            <p className="text-xs font-semibold text-blue-600 uppercase tracking-wide mb-1">
+              Objective
+            </p>
+            <p className="text-sm text-blue-800">{STAGE_OBJECTIVES[stage]}</p>
+          </div>
 
+          {/* Initial input */}
           {!conversing && (
             <textarea
               value={studentInput}
@@ -285,39 +388,38 @@ function WorkspaceProblemInner() {
             />
           )}
 
-          {conversationHistory.filter((m) => m.stage === stage).length > 0 && (
+          {/* Conversation for current stage */}
+          {currentStageMessages.length > 0 && (
             <div className="mt-4 flex flex-col gap-3">
-              {conversationHistory
-                .filter((m) => m.stage === stage)
-                .map((msg, i) => (
-                  <div
-                    key={i}
-                    className={`p-3 rounded-xl text-sm ${
-                      msg.role === "student"
-                        ? "bg-gray-50 border border-gray-200 text-gray-700 ml-8"
-                        : "border text-gray-700 mr-8"
-                    }`}
-                    style={
-                      msg.role === "ai"
-                        ? {
-                            backgroundColor: `${modeInfo.color}08`,
-                            borderColor: `${modeInfo.color}20`,
-                          }
-                        : {}
-                    }
+              {currentStageMessages.map((msg, index) => (
+                <div
+                  key={index}
+                  className={`p-3 rounded-xl text-sm ${
+                    msg.role === "student"
+                      ? "bg-gray-50 border border-gray-200 text-gray-700 ml-8"
+                      : "border text-gray-700 mr-8"
+                  }`}
+                  style={
+                    msg.role === "ai"
+                      ? {
+                          backgroundColor: `${modeInfo.color}08`,
+                          borderColor: `${modeInfo.color}30`,
+                        }
+                      : {}
+                  }
+                >
+                  <p
+                    className="text-xs font-semibold mb-1"
+                    style={{
+                      color:
+                        msg.role === "student" ? "#6b7280" : modeInfo.color,
+                    }}
                   >
-                    <p
-                      className="text-xs font-semibold mb-1"
-                      style={{
-                        color:
-                          msg.role === "student" ? "#6b7280" : modeInfo.color,
-                      }}
-                    >
-                      {msg.role === "student" ? "You" : "ThinkTrace AI"}
-                    </p>
-                    <div>{renderMath(msg.content || "")}</div>
-                  </div>
-                ))}
+                    {msg.role === "student" ? "You" : "ThinkTrace AI"}
+                  </p>
+                  <div>{renderMath(msg.content || "")}</div>
+                </div>
+              ))}
               {understood && timerDone && (
                 <p className="text-green-500 text-sm font-medium mt-1">
                   ✓ Ready to move to next stage
@@ -325,12 +427,13 @@ function WorkspaceProblemInner() {
               )}
               {understood && !timerDone && (
                 <p className="text-orange-500 text-sm font-medium mt-1">
-                  ✓ Understanding confirmed — waiting for timer
+                  ✓ Stage complete — waiting for timer
                 </p>
               )}
             </div>
           )}
 
+          {/* Response input */}
           {conversing && !understood && (
             <div className="mt-4">
               <p
@@ -357,15 +460,18 @@ function WorkspaceProblemInner() {
             <button
               onClick={canContinue ? handleContinue : handleSubmit}
               disabled={
-                !canContinue &&
-                (conversing
-                  ? aiResponse.trim() === ""
-                  : studentInput.trim() === "")
+                submitting ||
+                (!canContinue &&
+                  (conversing
+                    ? aiResponse.trim() === ""
+                    : studentInput.trim() === ""))
               }
-              className="text-white px-8 py-3 rounded-xl font-semibold transition disabled:opacity-40"
+              className="text-white px-8 py-3 rounded-xl font-semibold transition disabled:opacity-40 hover:opacity-90"
               style={{ backgroundColor: modeInfo.color }}
             >
-              {canContinue
+              {submitting
+                ? "..."
+                : canContinue
                 ? currentIndex < stages.length - 1
                   ? "Continue →"
                   : "Complete"

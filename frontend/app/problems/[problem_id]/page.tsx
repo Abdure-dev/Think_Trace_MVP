@@ -9,6 +9,21 @@ type Problem = {
   assignment_id?: string;
   problem_number: number;
   problem_text: string;
+  sibling_traces?: SiblingTrace[];
+};
+
+type SiblingTrace = {
+  problem_id: string;
+  problem_number: number;
+  problem_text: string;
+  traces: TraceRecord[];
+};
+
+type TraceRecord = {
+  id: string;
+  stage: string;
+  content: string;
+  created_at: string;
 };
 
 type ConversationMessage = {
@@ -92,6 +107,29 @@ export default function ProblemWorkspacePage() {
       }
       const data = await res.json();
       setProblem(data);
+
+      // Seed conversation history from sibling traces
+      if (data.sibling_traces && data.sibling_traces.length > 0) {
+        const seeded: ConversationMessage[] = [];
+        for (const sibling of data.sibling_traces) {
+          seeded.push({
+            role: "system",
+            content: `--- Previous part: Problem ${sibling.problem_number} — ${sibling.problem_text} ---`,
+            stage: "understand",
+          });
+          for (const trace of sibling.traces) {
+            if (trace.content) {
+              seeded.push({
+                role: "student",
+                content: trace.content,
+                stage: trace.stage,
+              });
+            }
+          }
+        }
+        setConversationHistory(seeded);
+      }
+
       setLoading(false);
     }
     fetchProblem();
@@ -128,24 +166,21 @@ export default function ProblemWorkspacePage() {
 
     setSubmitting(true);
 
-    // Save trace
-    await fetch(
-      `${process.env.NEXT_PUBLIC_API_URL}/problems/${problem_id}/traces`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          stage,
-          action: "text_submission",
-          content: inputToSend,
-        }),
-      }
-    );
+    // Save trace (don't block on failure)
+    fetch(`${process.env.NEXT_PUBLIC_API_URL}/problems/${problem_id}/traces`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        stage,
+        action: "text_submission",
+        content: inputToSend,
+      }),
+    }).catch(() => {});
 
-    // Get AI guidance — send full conversation history
+    // Get AI guidance with full history
     const guidanceRes = await fetch(
       `${process.env.NEXT_PUBLIC_API_URL}/problems/${problem_id}/ai-guidance`,
       {
@@ -158,20 +193,19 @@ export default function ProblemWorkspacePage() {
           stage,
           student_input: inputToSend,
           problem: problem.problem_text,
-          conversation_history: conversationHistory, // full history — all stages
+          conversation_history: conversationHistory,
         }),
       }
     );
 
     const guidanceData = await guidanceRes.json();
 
-    const updatedHistory: ConversationMessage[] = [
+    setConversationHistory([
       ...conversationHistory,
       { role: "student", content: inputToSend, stage },
       { role: "ai", content: guidanceData.message, stage },
-    ];
+    ]);
 
-    setConversationHistory(updatedHistory);
     setUnderstood(guidanceData.understood);
     setConversing(true);
     setAiResponse("");
@@ -186,7 +220,7 @@ export default function ProblemWorkspacePage() {
       setAiResponse("");
       setUnderstood(false);
       setConversing(false);
-      // Keep conversationHistory — don't reset it so AI has full context
+      // Keep conversationHistory — full history carries across stages
     }
   }
 
@@ -210,7 +244,7 @@ export default function ProblemWorkspacePage() {
   }
 
   const currentStageMessages = conversationHistory.filter(
-    (msg) => msg.stage === stage
+    (msg) => msg.stage === stage && msg.role !== "system"
   );
 
   return (
@@ -223,7 +257,6 @@ export default function ProblemWorkspacePage() {
           </div>
           <span className="text-white font-bold text-lg">ThinkTrace</span>
         </div>
-
         <p className="text-blue-300 text-xs uppercase tracking-wide font-semibold mb-4">
           Stages
         </p>
@@ -258,6 +291,22 @@ export default function ProblemWorkspacePage() {
 
       {/* Main */}
       <div className="flex-1 p-10 overflow-y-auto">
+        {/* Sibling context banner */}
+        {problem?.sibling_traces && problem.sibling_traces.length > 0 && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 mb-4">
+            <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-1">
+              Context from previous parts
+            </p>
+            <p className="text-sm text-amber-800">
+              ThinkTrace AI has full context from{" "}
+              {problem.sibling_traces
+                .map((s) => `Problem ${s.problem_number}`)
+                .join(", ")}{" "}
+              to guide you through this part.
+            </p>
+          </div>
+        )}
+
         {/* Problem card */}
         <div
           className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 mb-6 select-none"

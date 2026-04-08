@@ -106,7 +106,7 @@ STAGE_DEFINITIONS = {
             "Student must identify any constraints or special conditions",
             "Student must NOT attempt to solve yet — this is comprehension only",
         ],
-        "unlock_when": "Student has restated the problem, identified givens, identified the goal, and noted constraints — all in their own words. Even if correct, always ask all 5 questions.",
+        "unlock_when": "Student has restated the problem, identified givens, identified the goal, and noted constraints. Even if correct, always ask all 5 questions.",
         "questions": 5,
         "question_targets": [
             "Ask them to restate the problem in their own words",
@@ -125,7 +125,7 @@ STAGE_DEFINITIONS = {
             "Student must connect the concept to the specific structure of the problem",
             "Student must NOT start planning steps yet — this is identification only",
         ],
-        "unlock_when": "Student has named the right approach and justified why it fits this problem. Even if correct immediately, always ask all 5 questions.",
+        "unlock_when": "Student has named the right approach and justified why it fits. Even if correct immediately, always ask all 5 questions.",
         "questions": 5,
         "question_targets": [
             "Ask what type of problem this is (sorting, graph, recursion, proof, etc.)",
@@ -145,7 +145,7 @@ STAGE_DEFINITIONS = {
             "Student must NOT execute the plan yet — planning only",
             "Plan must cover the full solution from start to finish",
         ],
-        "unlock_when": "Student has a numbered, specific, logical plan that could realistically be followed. Even if the plan is good immediately, always ask all 5 questions.",
+        "unlock_when": "Student has a numbered, specific, logical plan. Even if the plan is good immediately, always ask all 5 questions.",
         "questions": 5,
         "question_targets": [
             "Ask them to write out their first step specifically",
@@ -233,12 +233,13 @@ UNLOCK CONDITION: {stage_info["unlock_when"]}
 STAGE RULES (enforce strictly):
 {chr(10).join(f"- {r}" for r in stage_info["rules"])}
 
-FULL CONVERSATION HISTORY (all stages):
+FULL CONVERSATION HISTORY (all stages and all previous parts):
 {history_text if history_text else "(none)"}
 
-NOTE: Messages are labeled by stage. You are currently in {stage.upper()}.
+NOTE: Messages labeled [STAGE] show which stage they came from.
+Lines starting with "---" are separators between different problem parts — use them to understand what the student already worked through.
 Count only YOUR messages labeled [{stage.upper()}] to determine questions asked in this stage.
-Use the full history to understand the student's thinking arc across all stages.
+Use the full history to avoid repeating questions and to build on what the student already demonstrated.
 
 STUDENT'S LATEST RESPONSE: {student_input}
 
@@ -252,11 +253,12 @@ ABSOLUTE RULES — NEVER BREAK THESE:
 2. Even if the student gives a perfect answer on the first try, you still ask all {stage_info["questions"]} questions
 3. Ask ONLY ONE question per response — never two questions at once
 4. Never give the answer or solve it for them
-5. If the student violates a stage rule (e.g. tries to solve in the understand stage), redirect them firmly back to the stage objective
+5. If the student violates a stage rule redirect them firmly back to the stage objective
 6. If questions_remaining > 0 → understood MUST be false, no exceptions
 7. If questions_remaining = 0 AND student has engaged genuinely → understood = true
 8. Keep your message to 2-3 sentences maximum
-9. Briefly acknowledge what the student said, then ask the next targeted question
+9. Briefly acknowledge what the student said then ask the next targeted question
+10. If this is a sub-part (e.g. part b), reference what the student did in previous parts where relevant
 
 Respond ONLY with valid JSON:
 {{"message": "your response", "understood": false}}
@@ -346,10 +348,14 @@ async def get_problem_ai_guidance(
     history_text = ""
     questions_asked_in_stage = 0
     for msg in body.conversation_history:
-        role = "Student" if msg["role"] == "student" else "ThinkTrace AI"
+        role = msg.get("role", "student")
+        if role == "system":
+            history_text += f"\n{msg.get('content', '')}"
+            continue
+        role_label = "Student" if role == "student" else "ThinkTrace AI"
         stage_label = msg.get("stage", "unknown").upper()
-        history_text += f"\n[{stage_label}] {role}: {msg['content']}"
-        if msg["role"] == "ai" and msg.get("stage") == body.stage:
+        history_text += f"\n[{stage_label}] {role_label}: {msg['content']}"
+        if role == "ai" and msg.get("stage") == body.stage:
             questions_asked_in_stage += 1
 
     prompt = build_ai_prompt(
@@ -382,9 +388,9 @@ async def get_problem_ai_guidance(
     else:
         parsed = {"message": "Could you explain your reasoning further?", "understood": False}
 
-    # Enforce 5 questions rule on backend too
-    questions_asked_in_stage_after = questions_asked_in_stage + 1
-    if questions_asked_in_stage_after < STAGE_DEFINITIONS.get(body.stage, {}).get("questions", 5):
+    # Enforce 5 questions on backend
+    questions_after = questions_asked_in_stage + 1
+    if questions_after < STAGE_DEFINITIONS.get(body.stage, {}).get("questions", 5):
         parsed["understood"] = False
 
     client.table("AI_Interactions").insert({
@@ -446,4 +452,37 @@ async def get_problem(problem_id: str, current_user=Security(get_current_user)):
     problem = client.table("Problems").select("*").eq("id", problem_id).execute()
     if not problem.data:
         raise HTTPException(status_code=404, detail="Problem not found")
-    return problem.data[0]
+
+    p = problem.data[0]
+
+    # Get sibling problems from same assignment
+    siblings = client.table("Problems") \
+        .select("id, problem_number, problem_text") \
+        .eq("assignment_id", p["assignment_id"]) \
+        .order("problem_number") \
+        .execute()
+
+    # Get traces for sibling problems completed before this one
+    sibling_ids = [s["id"] for s in siblings.data if s["problem_number"] < p["problem_number"]]
+
+    sibling_traces = []
+    for sid in sibling_ids:
+        traces = client.table("Traces") \
+            .select("*") \
+            .eq("problem_id", sid) \
+            .eq("user_id", current_user["id"]) \
+            .order("created_at") \
+            .execute()
+        if traces.data:
+            sibling_traces.append({
+                "problem_id": sid,
+                "problem_number": next(s["problem_number"] for s in siblings.data if s["id"] == sid),
+                "problem_text": next(s["problem_text"] for s in siblings.data if s["id"] == sid),
+                "traces": traces.data
+            })
+
+    return {
+        **p,
+        "siblings": siblings.data,
+        "sibling_traces": sibling_traces
+    }

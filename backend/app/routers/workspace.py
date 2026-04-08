@@ -231,7 +231,7 @@ Student input: {student_input}
 Respond ONLY with this JSON:
 {{"message": "Deep focus mode is active. Work through this independently.", "understood": false}}"""
 
-    base_prompt = f"""You are a Socratic tutor guiding a student through a structured academic reasoning process.
+    base = f"""You are a Socratic tutor guiding a student through a structured academic reasoning process.
 
 PROBLEM: {problem}
 
@@ -243,12 +243,14 @@ UNLOCK CONDITION: {stage_info["unlock_when"]}
 STAGE RULES (enforce strictly):
 {chr(10).join(f"- {r}" for r in stage_info["rules"])}
 
-FULL CONVERSATION HISTORY (all stages):
+FULL CONVERSATION HISTORY (all stages and all previous parts):
 {history_text if history_text else "(none)"}
 
-NOTE: Messages are labeled by stage. You are currently in {stage.upper()}.
+NOTE: Messages labeled [STAGE] show which stage they came from.
+Lines starting with "---" are separators between different problem parts — use them to understand what the student already worked through.
 Count only YOUR messages labeled [{stage.upper()}] to determine questions asked in this stage.
-Use the full history to understand the student's thinking arc — what they understood, planned, and attempted.
+Use the full history to avoid repeating questions and to build on what the student already demonstrated.
+If this is a sub-part, reference what the student did in previous parts where relevant.
 
 STUDENT'S LATEST RESPONSE: {student_input}
 
@@ -262,31 +264,28 @@ ABSOLUTE RULES — NEVER BREAK THESE:
 2. Even if the student gives a perfect answer on the first try, you still ask all {stage_info["questions"]} questions
 3. Ask ONLY ONE question per response — never two questions at once
 4. Never give the answer or solve it for them
-5. If the student violates a stage rule, redirect them firmly back to the stage objective
+5. If the student violates a stage rule redirect them firmly back to the stage objective
 6. If questions_remaining > 0 → understood MUST be false, no exceptions
 7. If questions_remaining = 0 AND student has engaged genuinely → understood = true
 8. Keep your message to 2-3 sentences maximum
-9. Briefly acknowledge what the student said, then ask the next targeted question
-10. Use the conversation history to avoid repeating questions and to build on what the student has already shown"""
+9. Briefly acknowledge what the student said then ask the next targeted question"""
 
     if mode == "guided":
-        return base_prompt + f"""
+        return base + f"""
 
 Respond ONLY with valid JSON:
 {{"message": "your response", "understood": false}}
 
-CRITICAL JSON FORMATTING: Double-escape LaTeX backslashes: \\\\frac not \\frac. Wrap ALL math in $ delimiters."""
-
+CRITICAL JSON FORMATTING: Double-escape LaTeX: \\\\frac not \\frac. Wrap ALL math in $ delimiters."""
     else:  # open
-        return base_prompt + f"""
+        return base + f"""
 
-In open mode you can explain concepts and give examples, but do not just hand them the answer.
-Be warm and encouraging.
+In open mode you can explain concepts and give examples but do not hand them the answer. Be warm and encouraging.
 
 Respond ONLY with valid JSON:
 {{"message": "your response", "understood": false}}
 
-CRITICAL JSON FORMATTING: Double-escape LaTeX backslashes: \\\\frac not \\frac. Wrap ALL math in $ delimiters."""
+CRITICAL JSON FORMATTING: Double-escape LaTeX: \\\\frac not \\frac. Wrap ALL math in $ delimiters."""
 
 
 # ── Routes ───────────────────────────────────────────────────────────────────
@@ -376,14 +375,17 @@ async def workspace_ai_guidance(
     body: WorkspaceAIGuidanceRequest,
     current_user=Security(get_current_user)
 ):
-    # Build full history with stage labels + count questions in current stage
     history_text = ""
     questions_asked_in_stage = 0
     for msg in body.conversation_history:
-        role = "Student" if msg["role"] == "student" else "ThinkTrace AI"
+        role = msg.get("role", "student")
+        if role == "system":
+            history_text += f"\n{msg.get('content', '')}"
+            continue
+        role_label = "Student" if role == "student" else "ThinkTrace AI"
         stage_label = msg.get("stage", "unknown").upper()
-        history_text += f"\n[{stage_label}] {role}: {msg['content']}"
-        if msg["role"] == "ai" and msg.get("stage") == body.stage:
+        history_text += f"\n[{stage_label}] {role_label}: {msg['content']}"
+        if role == "ai" and msg.get("stage") == body.stage:
             questions_asked_in_stage += 1
 
     prompt = build_ai_prompt(
@@ -411,7 +413,7 @@ async def workspace_ai_guidance(
     else:
         parsed = {"message": "Keep working through this step.", "understood": False}
 
-    # Enforce 5 questions rule on backend too
+    # Enforce 5 questions on backend
     questions_after = questions_asked_in_stage + 1
     if questions_after < STAGE_DEFINITIONS.get(body.stage, {}).get("questions", 5):
         parsed["understood"] = False
@@ -419,12 +421,61 @@ async def workspace_ai_guidance(
     return parsed
 
 
-@router.get('/workspace-problems/{problem_id}')
-async def get_workspace_problem(problem_id: str, current_user=Security(get_current_user)):
-    problem = client.table("Workspace_Problems") \
-        .select("*") \
-        .eq("id", problem_id) \
-        .execute()
+@router.post('/workspace-problems/{problem_id}/traces')
+async def create_workspace_trace(
+    problem_id: str,
+    body: dict,
+    current_user=Security(get_current_user)
+):
+    problem = client.table("Workspace_Problems").select("id").eq("id", problem_id).execute()
     if not problem.data:
         raise HTTPException(status_code=404, detail="Problem not found")
-    return problem.data[0]
+
+    trace = client.table("Workspace_Traces").insert({
+        "problem_id": problem_id,
+        "user_id": current_user["id"],
+        "stage": body.get("stage"),
+        "action": body.get("action"),
+        "content": body.get("content"),
+    }).execute()
+
+    return trace.data[0]
+
+
+@router.get('/workspace-problems/{problem_id}')
+async def get_workspace_problem(problem_id: str, current_user=Security(get_current_user)):
+    problem = client.table("Workspace_Problems").select("*").eq("id", problem_id).execute()
+    if not problem.data:
+        raise HTTPException(status_code=404, detail="Problem not found")
+
+    p = problem.data[0]
+
+    siblings = client.table("Workspace_Problems") \
+        .select("id, problem_number, problem_text") \
+        .eq("workspace_id", p["workspace_id"]) \
+        .order("problem_number") \
+        .execute()
+
+    sibling_ids = [s["id"] for s in siblings.data if s["problem_number"] < p["problem_number"]]
+
+    sibling_traces = []
+    for sid in sibling_ids:
+        traces = client.table("Workspace_Traces") \
+            .select("*") \
+            .eq("problem_id", sid) \
+            .eq("user_id", current_user["id"]) \
+            .order("created_at") \
+            .execute()
+        if traces.data:
+            sibling_traces.append({
+                "problem_id": sid,
+                "problem_number": next(s["problem_number"] for s in siblings.data if s["id"] == sid),
+                "problem_text": next(s["problem_text"] for s in siblings.data if s["id"] == sid),
+                "traces": traces.data
+            })
+
+    return {
+        **p,
+        "siblings": siblings.data,
+        "sibling_traces": sibling_traces
+    }
