@@ -7,7 +7,6 @@ from google.genai import types
 import os
 import json
 import re
-from datetime import datetime
 
 router = APIRouter()
 
@@ -15,6 +14,15 @@ client_ai = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+
+def call_gemini(contents):
+    for model in ["models/gemini-2.5-flash", "models/gemini-2.0-flash"]:
+        try:
+            return client_ai.models.generate_content(model=model, contents=contents)
+        except Exception:
+            continue
+    raise HTTPException(status_code=503, detail="AI service unavailable. Please try again.")
+
 
 def extract_problems_from_text(raw_text: str) -> list[str]:
     prompt = f"""You are given a set of notes, problems, or academic content.
@@ -28,44 +36,32 @@ Content:
 Return format:
 ["Full text of item 1", "Full text of item 2", ...]"""
 
-    response = client_ai.models.generate_content(
-        model="models/gemini-2.5-flash",
-        contents=prompt
-    )
-
+    response = call_gemini(prompt)
     text = response.text.strip()
     text = re.sub(r'```json\n?', '', text)
     text = re.sub(r'```\n?', '', text)
-
     try:
         problems = json.loads(text)
         if isinstance(problems, list):
             return [str(p) for p in problems]
     except json.JSONDecodeError:
         pass
-
     return [raw_text]
 
 
 def extract_text_from_pdf(file_bytes: bytes) -> str:
-    response = client_ai.models.generate_content(
-        model="models/gemini-2.5-flash",
-        contents=[
-            types.Part.from_bytes(data=file_bytes, mime_type="application/pdf"),
-            "Extract all the text from this document. Return only the raw text, no commentary."
-        ]
-    )
+    response = call_gemini([
+        types.Part.from_bytes(data=file_bytes, mime_type="application/pdf"),
+        "Extract all the text from this document. Return only the raw text, no commentary."
+    ])
     return response.text.strip()
 
 
 def extract_text_from_image(file_bytes: bytes, mime_type: str) -> str:
-    response = client_ai.models.generate_content(
-        model="models/gemini-2.5-flash",
-        contents=[
-            types.Part.from_bytes(data=file_bytes, mime_type=mime_type),
-            "Extract all the text from this image. Return only the raw text, no commentary."
-        ]
-    )
+    response = call_gemini([
+        types.Part.from_bytes(data=file_bytes, mime_type=mime_type),
+        "Extract all the text from this image. Return only the raw text, no commentary."
+    ])
     return response.text.strip()
 
 
@@ -136,7 +132,6 @@ async def create_workspace(
     if source_type not in ("pdf", "image", "text"):
         raise HTTPException(status_code=400, detail="Invalid source_type")
 
-    # Extract text
     extracted_text = ""
     if source_type == "text":
         if not raw_text:
@@ -151,7 +146,6 @@ async def create_workspace(
             raise HTTPException(status_code=400, detail="File required")
         extracted_text = extract_text_from_image(await file.read(), file.content_type or "image/jpeg")
 
-    # Save workspace
     workspace = client.table("Personal_Workspaces").insert({
         "user_id": current_user["id"],
         "title": title,
@@ -160,7 +154,6 @@ async def create_workspace(
 
     workspace_id = workspace.data[0]["id"]
 
-    # Extract and save problems
     problems = extract_problems_from_text(extracted_text)
     problem_rows = [
         {"workspace_id": workspace_id, "problem_number": i + 1, "problem_text": p}
@@ -187,11 +180,19 @@ async def get_workspaces(current_user=Security(get_current_user)):
 
 @router.get('/workspaces/{workspace_id}')
 async def get_workspace(workspace_id: str, current_user=Security(get_current_user)):
-    workspace = client.table("Personal_Workspaces").select("*").eq("id", workspace_id).eq("user_id", current_user["id"]).execute()
+    workspace = client.table("Personal_Workspaces") \
+        .select("*") \
+        .eq("id", workspace_id) \
+        .eq("user_id", current_user["id"]) \
+        .execute()
     if not workspace.data:
         raise HTTPException(status_code=404, detail="Workspace not found")
 
-    problems = client.table("Workspace_Problems").select("*").eq("workspace_id", workspace_id).order("problem_number").execute()
+    problems = client.table("Workspace_Problems") \
+        .select("*") \
+        .eq("workspace_id", workspace_id) \
+        .order("problem_number") \
+        .execute()
 
     return {
         **workspace.data[0],
@@ -213,10 +214,7 @@ async def workspace_ai_guidance(
 
     prompt = build_ai_prompt(body.mode, body.problem, body.stage, body.student_input, history_text)
 
-    response = client_ai.models.generate_content(
-        model="models/gemini-2.5-flash",
-        contents=prompt
-    )
+    response = call_gemini(prompt)
 
     text = response.text.strip()
     text = re.sub(r'```json\n?', '', text)
@@ -233,9 +231,14 @@ async def workspace_ai_guidance(
         parsed = {"message": "Keep working through this step.", "understood": False}
 
     return parsed
+
+
 @router.get('/workspace-problems/{problem_id}')
 async def get_workspace_problem(problem_id: str, current_user=Security(get_current_user)):
-    problem = client.table("Workspace_Problems").select("*").eq("id", problem_id).execute()
+    problem = client.table("Workspace_Problems") \
+        .select("*") \
+        .eq("id", problem_id) \
+        .execute()
     if not problem.data:
         raise HTTPException(status_code=404, detail="Problem not found")
     return problem.data[0]
