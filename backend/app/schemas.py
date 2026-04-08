@@ -23,3 +23,14 @@ class AIGuidanceRequest(BaseModel):
     student_input: str
     problem: str
     conversation_history: list = []
+
+class CreateWorkspaceRequest(BaseModel):
+    title: str = Field(min_length=1)
+    mode: Literal["deep_focus", "guided", "open"] = "guided"
+
+class WorkspaceAIGuidanceRequest(BaseModel):
+    stage: str
+    student_input: str
+    problem: str
+    mode: Literal["deep_focus", "guided", "open"]
+    conversation_history: list = []
