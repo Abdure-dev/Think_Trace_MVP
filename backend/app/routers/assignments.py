@@ -162,8 +162,17 @@ async def get_assignment(assignment_id: str, current_user=Security(get_current_u
     }
 
 
-@router.post('/assignments/{assignment_id}/ai-guidance')
-async def get_ai_guidance(assignment_id: str, body: AIGuidanceRequest, current_user=Security(get_current_user)):
+@router.post('/problems/{problem_id}/ai-guidance')
+async def get_problem_ai_guidance(
+    problem_id: str,
+    body: AIGuidanceRequest,
+    current_user=Security(get_current_user)
+):
+    problem = client.table("Problems").select("*").eq("id", problem_id).execute()
+    if not problem.data:
+        raise HTTPException(status_code=404, detail="Problem not found")
+
+    problem_text = problem.data[0]["problem_text"]
 
     history_text = ""
     for msg in body.conversation_history:
@@ -173,7 +182,7 @@ async def get_ai_guidance(assignment_id: str, body: AIGuidanceRequest, current_u
 
     prompt = f"""You are a Socratic tutor helping a student deeply understand a problem.
 
-Problem: {body.problem}
+Problem: {problem_text}
 Current stage: {body.stage}
 
 Conversation so far:{history_text if history_text else " (no previous conversation)"}
@@ -246,3 +255,68 @@ CRITICAL JSON FORMATTING RULES:
     }).execute()
 
     return parsed
+@router.post('/assignments/{assignment_id}/problems')
+async def add_problems(
+    assignment_id: str,
+    source_type: str = Form(...),
+    raw_text: str = Form(None),
+    file: UploadFile = File(None),
+    current_user=Security(get_current_user)
+):
+    if source_type not in ("pdf", "image", "text"):
+        raise HTTPException(status_code=400, detail="Invalid source_type")
+
+    extracted_text = ""
+
+    if source_type == "text":
+        if not raw_text:
+            raise HTTPException(status_code=400, detail="raw_text required")
+        extracted_text = raw_text
+
+    elif source_type == "pdf":
+        if not file:
+            raise HTTPException(status_code=400, detail="File required")
+        file_bytes = await file.read()
+        extracted_text = extract_text_from_pdf(file_bytes)
+
+    elif source_type == "image":
+        if not file:
+            raise HTTPException(status_code=400, detail="File required")
+        file_bytes = await file.read()
+        extracted_text = extract_text_from_image(file_bytes, file.content_type)
+
+    # get current max problem_number
+    existing = client.table("Problems") \
+        .select("problem_number") \
+        .eq("assignment_id", assignment_id) \
+        .order("problem_number", desc=True) \
+        .limit(1) \
+        .execute()
+
+    start_index = existing.data[0]["problem_number"] if existing.data else 0
+
+    problems = extract_problems_from_text(extracted_text)
+
+    rows = [
+        {
+            "assignment_id": assignment_id,
+            "problem_number": start_index + i + 1,
+            "problem_text": p,
+        }
+        for i, p in enumerate(problems)
+    ]
+
+    client.table("Problems").insert(rows).execute()
+
+    return {
+        "added_count": len(rows),
+        "problems": rows
+    }
+@router.get('/problems/{problem_id}')
+async def get_problem(problem_id: str, current_user=Security(get_current_user)):
+    problem = client.table("Problems").select("*").eq("id", problem_id).execute()
+
+    if not problem.data:
+        raise HTTPException(status_code=404, detail="Problem not found")
+
+    return problem.data[0]

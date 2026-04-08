@@ -26,3 +26,11 @@ async def create_course(body: dict, current_user = Security(get_current_user)):
     }).execute()
     
     return course.data[0]
+@router.get('/courses/{course_id}')
+async def get_course(course_id: str, current_user=Security(get_current_user)):
+    course = client.table("Courses").select("*").eq("id", course_id).execute()
+
+    if not course.data:
+        raise HTTPException(status_code=404, detail="Course not found")
+
+    return course.data[0]
