@@ -630,7 +630,7 @@ export default function LandingPage() {
               {
                 num: "01",
                 title: "Instructor uploads an assignment",
-                body: "Paste text, upload a PDF, or drop an image. ThinkTrace extracts every problem automatically using Gemini.",
+                body: "Paste text, upload a PDF, or drop an image. ThinkTrace extracts every problem automatically.",
               },
               {
                 num: "02",
