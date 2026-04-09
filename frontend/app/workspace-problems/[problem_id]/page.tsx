@@ -5,6 +5,10 @@ import { useEffect, useState, Suspense } from "react";
 import { InlineMath, BlockMath } from "react-katex";
 import MathInput from "@/components/MathInput";
 
+const MAROON = "#800000";
+const PURPLE = "#4E2A84";
+const GRAD = `linear-gradient(135deg, ${MAROON}, ${PURPLE})`;
+
 type Part = {
   id: string;
   part_label: string;
@@ -41,10 +45,19 @@ type ConversationMessage = {
   stage: string;
 };
 
+type SummaryData = {
+  stage_insights: Record<string, string>;
+  key_insight: string;
+  strongest_stage: string;
+  weakest_stage: string;
+  growth_note: string;
+  overall_score: number;
+};
+
 const MODES = {
   deep_focus: { label: "Deep Focus", color: "#1e2a4a" },
-  guided: { label: "Guided", color: "#800000" },
-  open: { label: "Open", color: "#2d6a4f" },
+  guided: { label: "Guided", color: MAROON },
+  open: { label: "Open", color: PURPLE },
 };
 
 const STAGE_OBJECTIVES: Record<string, string> = {
@@ -60,6 +73,436 @@ const STAGE_OBJECTIVES: Record<string, string> = {
   reflection:
     "What did you learn? What is the key insight? How does this connect to what you already know?",
 };
+
+const STAGE_COLORS: Record<
+  string,
+  { bg: string; border: string; label: string }
+> = {
+  understand: { bg: "#eff6ff", border: "#bfdbfe", label: "Understand" },
+  concept: { bg: "#f0fdf4", border: "#bbf7d0", label: "Concept" },
+  plan: { bg: "#fffbeb", border: "#fde68a", label: "Plan" },
+  attempt: { bg: "#faf5ff", border: "#e9d5ff", label: "Attempt" },
+  critique: { bg: "#fff7ed", border: "#fed7aa", label: "Critique" },
+  reflection: { bg: "#fdf4ff", border: "#f0abfc", label: "Reflect" },
+};
+
+function renderMath(text: string) {
+  const cleaned = (text || "").replace(/\\\\/g, "\\");
+  return cleaned.split(/(\$\$[\s\S]+?\$\$|\$[^$]+?\$)/).map((part, i) => {
+    if (part.startsWith("$$"))
+      return <BlockMath key={i} math={part.slice(2, -2)} />;
+    if (part.startsWith("$"))
+      return <InlineMath key={i} math={part.slice(1, -1)} />;
+    return <span key={i}>{part}</span>;
+  });
+}
+
+function SummaryCard({
+  summary,
+  problem,
+  onDownload,
+  downloading,
+}: {
+  summary: SummaryData;
+  problem: Problem;
+  onDownload: () => void;
+  downloading: boolean;
+}) {
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const stages = [
+    "understand",
+    "concept",
+    "plan",
+    "attempt",
+    "critique",
+    "reflection",
+  ];
+  const score = summary.overall_score || 0;
+
+  return (
+    <div
+      style={{
+        background: "white",
+        borderRadius: "20px",
+        border: "1px solid rgba(26,18,8,0.06)",
+        overflow: "hidden",
+        marginTop: "24px",
+      }}
+    >
+      {/* Header */}
+      <div style={{ background: GRAD, padding: "28px 28px 24px" }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            justifyContent: "space-between",
+          }}
+        >
+          <div>
+            <p
+              style={{
+                color: "rgba(255,255,255,0.65)",
+                fontSize: "11px",
+                fontWeight: 700,
+                textTransform: "uppercase",
+                letterSpacing: "0.08em",
+                margin: "0 0 6px",
+              }}
+            >
+              Problem {problem.problem_number} Complete
+            </p>
+            <h2
+              style={{
+                color: "white",
+                fontSize: "22px",
+                fontWeight: 700,
+                margin: "0 0 4px",
+                fontFamily: "Georgia, serif",
+              }}
+            >
+              Reasoning Summary
+            </h2>
+            <p
+              style={{
+                color: "rgba(255,255,255,0.65)",
+                fontSize: "13px",
+                margin: 0,
+              }}
+            >
+              Your ThinkTrace AI analysis
+            </p>
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div
+              style={{
+                color: "white",
+                fontSize: "40px",
+                fontWeight: 700,
+                lineHeight: 1,
+              }}
+            >
+              {score}
+              <span style={{ fontSize: "18px", opacity: 0.5 }}>/10</span>
+            </div>
+            <p
+              style={{
+                color: "rgba(255,255,255,0.55)",
+                fontSize: "11px",
+                margin: "4px 0 0",
+              }}
+            >
+              Reasoning depth
+            </p>
+          </div>
+        </div>
+        <div
+          style={{
+            marginTop: "16px",
+            height: "4px",
+            background: "rgba(255,255,255,0.2)",
+            borderRadius: "2px",
+          }}
+        >
+          <div
+            style={{
+              height: "100%",
+              background: "white",
+              borderRadius: "2px",
+              width: `${score * 10}%`,
+              transition: "width 1s ease",
+            }}
+          />
+        </div>
+      </div>
+
+      <div style={{ padding: "24px 28px" }}>
+        {/* Key insight */}
+        <div
+          style={{
+            background: `linear-gradient(135deg, ${MAROON}08, ${PURPLE}08)`,
+            border: `1px solid ${PURPLE}20`,
+            borderRadius: "12px",
+            padding: "16px",
+            marginBottom: "20px",
+          }}
+        >
+          <p
+            style={{
+              fontSize: "10px",
+              fontWeight: 700,
+              textTransform: "uppercase",
+              letterSpacing: "0.08em",
+              color: PURPLE,
+              margin: "0 0 8px",
+            }}
+          >
+            Key Insight
+          </p>
+          <p
+            style={{
+              color: "#1a1208",
+              fontWeight: 500,
+              lineHeight: 1.6,
+              margin: 0,
+              fontSize: "15px",
+            }}
+          >
+            {summary.key_insight}
+          </p>
+        </div>
+
+        {/* Strongest / weakest */}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: "10px",
+            marginBottom: "20px",
+          }}
+        >
+          <div
+            style={{
+              background: "#f0fdf4",
+              border: "1px solid #bbf7d0",
+              borderRadius: "12px",
+              padding: "12px 14px",
+            }}
+          >
+            <p
+              style={{
+                fontSize: "10px",
+                fontWeight: 700,
+                color: "#16a34a",
+                textTransform: "uppercase",
+                letterSpacing: "0.06em",
+                margin: "0 0 4px",
+              }}
+            >
+              Strongest stage
+            </p>
+            <p
+              style={{
+                fontSize: "14px",
+                fontWeight: 700,
+                color: "#166534",
+                textTransform: "capitalize",
+                margin: 0,
+              }}
+            >
+              {summary.strongest_stage}
+            </p>
+          </div>
+          <div
+            style={{
+              background: "#fff7ed",
+              border: "1px solid #fed7aa",
+              borderRadius: "12px",
+              padding: "12px 14px",
+            }}
+          >
+            <p
+              style={{
+                fontSize: "10px",
+                fontWeight: 700,
+                color: "#d97706",
+                textTransform: "uppercase",
+                letterSpacing: "0.06em",
+                margin: "0 0 4px",
+              }}
+            >
+              Focus area
+            </p>
+            <p
+              style={{
+                fontSize: "14px",
+                fontWeight: 700,
+                color: "#92400e",
+                textTransform: "capitalize",
+                margin: 0,
+              }}
+            >
+              {summary.weakest_stage}
+            </p>
+          </div>
+        </div>
+
+        {/* Stage breakdown */}
+        <p
+          style={{
+            fontSize: "13px",
+            fontWeight: 700,
+            color: "#374151",
+            margin: "0 0 10px",
+          }}
+        >
+          Stage-by-stage analysis
+        </p>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: "6px",
+            marginBottom: "20px",
+          }}
+        >
+          {stages.map((s) => {
+            const insight = summary.stage_insights?.[s];
+            if (!insight) return null;
+            const cfg = STAGE_COLORS[s];
+            return (
+              <div
+                key={s}
+                style={{
+                  borderRadius: "10px",
+                  border: `1px solid ${cfg.border}`,
+                  overflow: "hidden",
+                }}
+              >
+                <button
+                  onClick={() => setExpanded(expanded === s ? null : s)}
+                  style={{
+                    width: "100%",
+                    padding: "10px 14px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    background: cfg.bg,
+                    border: "none",
+                    cursor: "pointer",
+                    textAlign: "left",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "8px",
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontSize: "13px",
+                        fontWeight: 700,
+                        color: "#1a1208",
+                      }}
+                    >
+                      {cfg.label}
+                    </span>
+                    {s === summary.strongest_stage && (
+                      <span
+                        style={{
+                          fontSize: "10px",
+                          padding: "2px 8px",
+                          borderRadius: "100px",
+                          background: "#dcfce7",
+                          color: "#16a34a",
+                          fontWeight: 700,
+                        }}
+                      >
+                        strongest
+                      </span>
+                    )}
+                    {s === summary.weakest_stage && (
+                      <span
+                        style={{
+                          fontSize: "10px",
+                          padding: "2px 8px",
+                          borderRadius: "100px",
+                          background: "#ffedd5",
+                          color: "#ea580c",
+                          fontWeight: 700,
+                        }}
+                      >
+                        focus here
+                      </span>
+                    )}
+                  </div>
+                  <span style={{ color: "#9ca3af", fontSize: "12px" }}>
+                    {expanded === s ? "▲" : "▼"}
+                  </span>
+                </button>
+                {expanded === s && (
+                  <div
+                    style={{
+                      padding: "12px 14px",
+                      background: "white",
+                      borderTop: `1px solid ${cfg.border}`,
+                    }}
+                  >
+                    <p
+                      style={{
+                        fontSize: "13px",
+                        color: "#5a4a3a",
+                        lineHeight: 1.6,
+                        margin: 0,
+                      }}
+                    >
+                      {insight}
+                    </p>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Growth note */}
+        <div
+          style={{
+            background: `${PURPLE}06`,
+            border: `1px solid ${PURPLE}15`,
+            borderRadius: "12px",
+            padding: "14px 16px",
+            marginBottom: "20px",
+          }}
+        >
+          <p
+            style={{
+              fontSize: "10px",
+              fontWeight: 700,
+              color: PURPLE,
+              textTransform: "uppercase",
+              letterSpacing: "0.08em",
+              margin: "0 0 6px",
+            }}
+          >
+            To improve next time
+          </p>
+          <p
+            style={{
+              fontSize: "13px",
+              color: "#5a4a3a",
+              lineHeight: 1.6,
+              margin: 0,
+            }}
+          >
+            {summary.growth_note}
+          </p>
+        </div>
+
+        {/* Download */}
+        <button
+          onClick={onDownload}
+          disabled={downloading}
+          style={{
+            width: "100%",
+            padding: "13px",
+            borderRadius: "12px",
+            background: GRAD,
+            color: "white",
+            fontSize: "14px",
+            fontWeight: 600,
+            border: "none",
+            cursor: "pointer",
+            opacity: downloading ? 0.6 : 1,
+          }}
+        >
+          {downloading ? "Generating PDF..." : "Download as PDF Notes ↓"}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function WorkspaceProblemInner() {
   const router = useRouter();
@@ -108,6 +551,9 @@ function WorkspaceProblemInner() {
   const [submitting, setSubmitting] = useState(false);
   const [partComplete, setPartComplete] = useState(false);
   const [allPartsComplete, setAllPartsComplete] = useState(false);
+  const [summary, setSummary] = useState<SummaryData | null>(null);
+  const [generatingSummary, setGeneratingSummary] = useState(false);
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
 
   const stages = [
     "understand",
@@ -141,24 +587,19 @@ function WorkspaceProblemInner() {
     !problem?.parts?.length || currentPartIndex >= problem.parts.length - 1;
   const isLastStage = currentIndex === stages.length - 1;
 
-  // Persist state
   useEffect(() => {
     localStorage.setItem(`ws_stage_${problem_id}`, stage);
   }, [stage, problem_id]);
-
   useEffect(() => {
     localStorage.setItem(`ws_part_${problem_id}`, String(currentPartIndex));
   }, [currentPartIndex, problem_id]);
-
   useEffect(() => {
-    if (conversationHistory.length > 0) {
+    if (conversationHistory.length > 0)
       localStorage.setItem(
         `ws_trace_${problem_id}`,
         JSON.stringify(conversationHistory)
       );
-    }
   }, [conversationHistory, problem_id]);
-
   useEffect(() => {
     localStorage.setItem(`ws_conversing_${problem_id}`, String(conversing));
   }, [conversing, problem_id]);
@@ -177,22 +618,18 @@ function WorkspaceProblemInner() {
         router.push("/login");
         return;
       }
-
       const res = await fetch(
         `${process.env.NEXT_PUBLIC_API_URL}/workspace-problems/${problem_id}`,
         {
           headers: { Authorization: `Bearer ${token}` },
         }
       );
-
       if (!res.ok) {
         setLoading(false);
         return;
       }
       const data = await res.json();
       setProblem(data);
-
-      // Only seed from sibling traces if no saved history
       const savedHistory = localStorage.getItem(`ws_trace_${problem_id}`);
       if (
         !savedHistory &&
@@ -207,18 +644,16 @@ function WorkspaceProblemInner() {
             stage: "understand",
           });
           for (const trace of sibling.traces) {
-            if (trace.content) {
+            if (trace.content)
               seeded.push({
                 role: "student",
                 content: trace.content,
                 stage: trace.stage,
               });
-            }
           }
         }
         setConversationHistory(seeded);
       }
-
       setLoading(false);
     }
     fetchProblem();
@@ -249,7 +684,6 @@ function WorkspaceProblemInner() {
     const inputToSend = conversing ? aiResponse : studentInput;
     if (!inputToSend.trim()) return;
     setSubmitting(true);
-
     fetch(
       `${process.env.NEXT_PUBLIC_API_URL}/workspace-problems/${problem_id}/traces`,
       {
@@ -265,7 +699,6 @@ function WorkspaceProblemInner() {
         }),
       }
     ).catch(() => {});
-
     const guidanceRes = await fetch(
       `${process.env.NEXT_PUBLIC_API_URL}/workspaces/${problem.workspace_id}/problems/${problem_id}/ai-guidance`,
       {
@@ -283,15 +716,12 @@ function WorkspaceProblemInner() {
         }),
       }
     );
-
     const guidanceData = await guidanceRes.json();
-
     setConversationHistory([
       ...conversationHistory,
       { role: "student", content: inputToSend, stage },
       { role: "ai", content: guidanceData.message, stage },
     ]);
-
     setUnderstood(guidanceData.understood);
     setConversing(true);
     setAiResponse("");
@@ -336,45 +766,379 @@ function WorkspaceProblemInner() {
     }
   }
 
-  function renderMath(text: string) {
-    const cleaned = (text || "").replace(/\\\\/g, "\\");
-    return cleaned.split(/(\$\$[\s\S]+?\$\$|\$[^$]+?\$)/).map((part, i) => {
-      if (part.startsWith("$$"))
-        return <BlockMath key={i} math={part.slice(2, -2)} />;
-      if (part.startsWith("$"))
-        return <InlineMath key={i} math={part.slice(1, -1)} />;
-      return <span key={i}>{part}</span>;
-    });
+  async function generateSummary() {
+    setGeneratingSummary(true);
+    const token = localStorage.getItem("token");
+    try {
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/workspace-problems/${problem_id}/summary`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ conversation_history: conversationHistory }),
+        }
+      );
+      const data = await res.json();
+      setSummary(data);
+    } catch (e) {
+      console.error("Summary generation failed", e);
+    }
+    setGeneratingSummary(false);
+  }
+
+  async function downloadPdf() {
+    if (!summary || !problem) return;
+    setDownloadingPdf(true);
+    try {
+      const { jsPDF } = await import("jspdf");
+      const doc = new jsPDF();
+
+      // Header bar
+      doc.setFillColor(128, 0, 0);
+      doc.rect(0, 0, 210, 42, "F");
+      doc.setFillColor(78, 42, 132);
+      doc.rect(140, 0, 70, 42, "F");
+
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(18);
+      doc.setFont("helvetica", "bold");
+      doc.text("ThinkTrace", 14, 16);
+      doc.setFontSize(11);
+      doc.setFont("helvetica", "normal");
+      doc.text("Reasoning Summary", 14, 26);
+      doc.text(`Problem ${problem.problem_number}`, 14, 35);
+
+      doc.setFontSize(28);
+      doc.setFont("helvetica", "bold");
+      doc.text(`${summary.overall_score}/10`, 148, 26);
+
+      let y = 56;
+
+      // Problem text
+      doc.setTextColor(90, 74, 58);
+      doc.setFontSize(9);
+      doc.setFont("helvetica", "italic");
+      const probLines = doc.splitTextToSize(
+        problem.problem_text.replace(/\$[^$]+\$/g, "[math]"),
+        180
+      );
+      doc.text(probLines, 14, y);
+      y += probLines.length * 4.5 + 10;
+
+      // Key insight box
+      doc.setFillColor(245, 240, 255);
+      const insightLines = doc.splitTextToSize(summary.key_insight, 172);
+      doc.roundedRect(10, y - 4, 190, insightLines.length * 5 + 18, 3, 3, "F");
+      doc.setTextColor(78, 42, 132);
+      doc.setFontSize(9);
+      doc.setFont("helvetica", "bold");
+      doc.text("KEY INSIGHT", 14, y + 4);
+      doc.setTextColor(40, 20, 60);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(10);
+      doc.text(insightLines, 14, y + 11);
+      y += insightLines.length * 5 + 24;
+
+      // Strongest/weakest
+      doc.setFillColor(240, 253, 244);
+      doc.roundedRect(10, y - 3, 90, 20, 2, 2, "F");
+      doc.setTextColor(22, 163, 74);
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "bold");
+      doc.text("STRONGEST STAGE", 14, y + 4);
+      doc.setTextColor(20, 83, 45);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(11);
+      doc.text(
+        summary.strongest_stage?.charAt(0).toUpperCase() +
+          summary.strongest_stage?.slice(1) || "",
+        14,
+        y + 12
+      );
+
+      doc.setFillColor(255, 247, 237);
+      doc.roundedRect(110, y - 3, 90, 20, 2, 2, "F");
+      doc.setTextColor(217, 119, 6);
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "bold");
+      doc.text("FOCUS AREA", 114, y + 4);
+      doc.setTextColor(146, 64, 14);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(11);
+      doc.text(
+        summary.weakest_stage?.charAt(0).toUpperCase() +
+          summary.weakest_stage?.slice(1) || "",
+        114,
+        y + 12
+      );
+      y += 28;
+
+      // Stage insights
+      doc.setTextColor(78, 42, 132);
+      doc.setFontSize(11);
+      doc.setFont("helvetica", "bold");
+      doc.text("Stage Analysis", 14, y);
+      y += 8;
+
+      const stageList = [
+        "understand",
+        "concept",
+        "plan",
+        "attempt",
+        "critique",
+        "reflection",
+      ];
+      for (const s of stageList) {
+        const insight = summary.stage_insights?.[s];
+        if (!insight) continue;
+        if (y > 255) {
+          doc.addPage();
+          y = 20;
+        }
+        doc.setFillColor(250, 248, 252);
+        const lines = doc.splitTextToSize(insight, 170);
+        doc.roundedRect(10, y - 3, 190, lines.length * 5 + 14, 2, 2, "F");
+        doc.setTextColor(128, 0, 0);
+        doc.setFontSize(9);
+        doc.setFont("helvetica", "bold");
+        doc.text(s.charAt(0).toUpperCase() + s.slice(1), 14, y + 4);
+        doc.setTextColor(60, 40, 40);
+        doc.setFont("helvetica", "normal");
+        doc.text(lines, 14, y + 10);
+        y += lines.length * 5 + 18;
+      }
+
+      // Growth note
+      if (y > 245) {
+        doc.addPage();
+        y = 20;
+      }
+      doc.setFillColor(248, 244, 255);
+      const growthLines = doc.splitTextToSize(summary.growth_note, 172);
+      doc.roundedRect(10, y - 3, 190, growthLines.length * 5 + 18, 3, 3, "F");
+      doc.setTextColor(78, 42, 132);
+      doc.setFontSize(9);
+      doc.setFont("helvetica", "bold");
+      doc.text("TO IMPROVE NEXT TIME", 14, y + 4);
+      doc.setTextColor(40, 20, 60);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(10);
+      doc.text(growthLines, 14, y + 11);
+
+      // Footer
+      const pageCount = (doc as any).internal.getNumberOfPages();
+      for (let i = 1; i <= pageCount; i++) {
+        doc.setPage(i);
+        doc.setTextColor(160, 140, 130);
+        doc.setFontSize(8);
+        doc.text(
+          `ThinkTrace — Built at UChicago & Northwestern · ${new Date().toLocaleDateString()} · Page ${i} of ${pageCount}`,
+          14,
+          290
+        );
+      }
+
+      doc.save(`thinktrace-problem-${problem.problem_number}-summary.pdf`);
+    } catch (e) {
+      console.error("PDF generation failed", e);
+    }
+    setDownloadingPdf(false);
   }
 
   if (loading)
     return (
-      <div className="min-h-screen bg-[#f8f9fc] p-10 text-gray-500">
-        Loading...
+      <div
+        style={{
+          minHeight: "100vh",
+          background: "#f8f9fc",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <div style={{ textAlign: "center" }}>
+          <div
+            style={{
+              width: "40px",
+              height: "40px",
+              borderRadius: "50%",
+              border: `3px solid ${PURPLE}`,
+              borderTopColor: "transparent",
+              margin: "0 auto 12px",
+              animation: "spin 0.8s linear infinite",
+            }}
+          />
+          <p style={{ color: "#8a7a6a", fontSize: "14px" }}>
+            Loading problem...
+          </p>
+        </div>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
     );
 
   if (allPartsComplete) {
     return (
-      <div className="min-h-screen bg-[#f8f9fc] flex items-center justify-center">
-        <div className="bg-white rounded-2xl p-10 shadow-sm border border-gray-100 text-center max-w-md">
-          <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-4">
-            <span className="text-green-600 text-2xl">✓</span>
+      <div style={{ minHeight: "100vh", background: "#f8f9fc" }}>
+        {/* Nav */}
+        <div
+          style={{
+            padding: "16px 32px",
+            background: "white",
+            borderBottom: "1px solid rgba(26,18,8,0.06)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <div
+              style={{
+                width: "32px",
+                height: "32px",
+                borderRadius: "8px",
+                background: GRAD,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <span
+                style={{
+                  color: "white",
+                  fontWeight: 700,
+                  fontSize: "14px",
+                  fontFamily: "Georgia, serif",
+                }}
+              >
+                T
+              </span>
+            </div>
+            <span
+              style={{ fontWeight: 700, fontSize: "16px", color: "#1a1208" }}
+            >
+              ThinkTrace
+            </span>
           </div>
-          <h2 className="text-2xl font-bold text-gray-800 mb-2">
-            Problem Complete!
-          </h2>
-          <p className="text-gray-400 mb-6">
-            You've worked through all parts with full reasoning traces.
-          </p>
           <button
             onClick={() => router.back()}
-            className="px-6 py-3 rounded-xl text-white font-semibold hover:opacity-90 transition"
-            style={{ backgroundColor: modeInfo.color }}
+            style={{
+              fontSize: "13px",
+              color: "#8a7a6a",
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+            }}
           >
-            Back to Problems
+            ← Back
           </button>
         </div>
+
+        <div style={{ padding: "40px", maxWidth: "680px", margin: "0 auto" }}>
+          {/* Complete card */}
+          <div
+            style={{
+              background: "white",
+              borderRadius: "20px",
+              padding: "36px",
+              border: "1px solid rgba(26,18,8,0.06)",
+              textAlign: "center",
+              marginBottom: "0",
+            }}
+          >
+            <div
+              style={{
+                width: "64px",
+                height: "64px",
+                borderRadius: "50%",
+                background: `linear-gradient(135deg, ${MAROON}18, ${PURPLE}18)`,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                margin: "0 auto 16px",
+              }}
+            >
+              <span style={{ fontSize: "28px" }}>✓</span>
+            </div>
+            <h2
+              style={{
+                fontSize: "24px",
+                fontWeight: 700,
+                color: "#1a1208",
+                margin: "0 0 8px",
+                fontFamily: "Georgia, serif",
+              }}
+            >
+              Problem Complete!
+            </h2>
+            <p
+              style={{
+                color: "#8a7a6a",
+                marginBottom: "28px",
+                fontSize: "15px",
+                lineHeight: 1.6,
+              }}
+            >
+              You have worked through all stages with full reasoning traces
+              saved.
+            </p>
+
+            {!summary && !generatingSummary && (
+              <button
+                onClick={generateSummary}
+                style={{
+                  padding: "13px 32px",
+                  borderRadius: "12px",
+                  background: GRAD,
+                  color: "white",
+                  fontSize: "15px",
+                  fontWeight: 600,
+                  border: "none",
+                  cursor: "pointer",
+                }}
+              >
+                Generate AI Summary Notes
+              </button>
+            )}
+
+            {generatingSummary && (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  gap: "12px",
+                }}
+              >
+                <div
+                  style={{
+                    width: "32px",
+                    height: "32px",
+                    borderRadius: "50%",
+                    border: `3px solid ${PURPLE}`,
+                    borderTopColor: "transparent",
+                    animation: "spin 0.8s linear infinite",
+                  }}
+                />
+                <p style={{ color: "#8a7a6a", fontSize: "14px" }}>
+                  ThinkTrace AI is analyzing your reasoning...
+                </p>
+              </div>
+            )}
+          </div>
+
+          {summary && problem && (
+            <SummaryCard
+              summary={summary}
+              problem={problem}
+              onDownload={downloadPdf}
+              downloading={downloadingPdf}
+            />
+          )}
+        </div>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
     );
   }
@@ -384,48 +1148,110 @@ function WorkspaceProblemInner() {
   );
 
   return (
-    <div className="min-h-screen flex bg-[#f8f9fc]">
+    <div style={{ minHeight: "100vh", display: "flex", background: "#f8f9fc" }}>
+      <style>{`@keyframes fadeUp { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }`}</style>
+
       {/* Sidebar */}
-      <div className="w-64 min-h-screen p-6 bg-[#1e2a4a] flex flex-col">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-gradient-to-br from-[#667eea] to-[#764ba2]">
-            <span className="text-white font-bold text-sm">T</span>
+      <div
+        style={{
+          width: "220px",
+          minHeight: "100vh",
+          padding: "22px 16px",
+          background: `linear-gradient(180deg, ${PURPLE} 0%, #3a1a6a 100%)`,
+          display: "flex",
+          flexDirection: "column",
+          flexShrink: 0,
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+            marginBottom: "20px",
+          }}
+        >
+          <div
+            style={{
+              width: "30px",
+              height: "30px",
+              borderRadius: "7px",
+              background: GRAD,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <span
+              style={{
+                color: "white",
+                fontWeight: 700,
+                fontSize: "13px",
+                fontFamily: "Georgia, serif",
+              }}
+            >
+              T
+            </span>
           </div>
-          <span className="text-white font-bold text-lg">ThinkTrace</span>
+          <span style={{ color: "white", fontWeight: 700, fontSize: "15px" }}>
+            ThinkTrace
+          </span>
         </div>
 
-        <div className="mb-4">
+        <div style={{ marginBottom: "16px" }}>
           <span
-            className="text-xs font-semibold px-2.5 py-1 rounded-full text-white"
-            style={{ backgroundColor: modeInfo.color }}
+            style={{
+              fontSize: "10px",
+              fontWeight: 700,
+              padding: "3px 10px",
+              borderRadius: "100px",
+              color: "white",
+              background: modeInfo.color,
+            }}
           >
             {modeInfo.label} mode
           </span>
         </div>
 
         {hasMultipleParts && (
-          <div className="mb-6">
-            <p className="text-blue-300 text-xs uppercase tracking-wide font-semibold mb-2">
+          <div style={{ marginBottom: "16px" }}>
+            <p
+              style={{
+                color: "rgba(200,180,255,0.6)",
+                fontSize: "9px",
+                fontWeight: 700,
+                textTransform: "uppercase",
+                letterSpacing: "0.08em",
+                margin: "0 0 8px",
+              }}
+            >
               Parts
             </p>
-            <div className="flex gap-2 flex-wrap">
+            <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
               {problem!.parts.map((part, i) => (
                 <div
                   key={part.id}
-                  className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold"
                   style={{
+                    width: "30px",
+                    height: "30px",
+                    borderRadius: "7px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: "10px",
+                    fontWeight: 700,
                     background:
                       i < currentPartIndex
                         ? "#4ade80"
                         : i === currentPartIndex
                         ? "white"
-                        : "rgba(255,255,255,0.2)",
+                        : "rgba(255,255,255,0.15)",
                     color:
                       i < currentPartIndex
                         ? "white"
                         : i === currentPartIndex
-                        ? "#1e2a4a"
-                        : "rgba(255,255,255,0.5)",
+                        ? PURPLE
+                        : "rgba(255,255,255,0.4)",
                   }}
                 >
                   {i < currentPartIndex ? "✓" : `(${part.part_label})`}
@@ -435,46 +1261,100 @@ function WorkspaceProblemInner() {
           </div>
         )}
 
-        <p className="text-blue-300 text-xs uppercase tracking-wide font-semibold mb-4">
+        <p
+          style={{
+            color: "rgba(200,180,255,0.6)",
+            fontSize: "9px",
+            fontWeight: 700,
+            textTransform: "uppercase",
+            letterSpacing: "0.08em",
+            margin: "0 0 8px",
+          }}
+        >
           Stages
         </p>
-        <div className="flex flex-col gap-2">
+        <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
           {stages.map((s, i) => (
             <div
               key={s}
-              className={`flex items-center gap-3 px-4 py-3 rounded-xl transition ${
-                s === stage
-                  ? "bg-white bg-opacity-20 text-white font-medium"
-                  : i < currentIndex
-                  ? "text-green-400"
-                  : "text-blue-300"
-              }`}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "10px",
+                padding: "8px 10px",
+                borderRadius: "8px",
+                background:
+                  s === stage ? "rgba(255,255,255,0.18)" : "transparent",
+              }}
             >
               <div
-                className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${
-                  i < currentIndex
-                    ? "bg-green-400 text-white"
-                    : s === stage
-                    ? "bg-white text-blue-800"
-                    : "bg-white bg-opacity-20 text-white"
-                }`}
+                style={{
+                  width: "20px",
+                  height: "20px",
+                  borderRadius: "50%",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: "10px",
+                  fontWeight: 700,
+                  flexShrink: 0,
+                  background:
+                    i < currentIndex
+                      ? "#4ade80"
+                      : s === stage
+                      ? MAROON
+                      : "rgba(255,255,255,0.15)",
+                  color: "white",
+                }}
               >
                 {i < currentIndex ? "✓" : i + 1}
               </div>
-              <span className="capitalize text-sm">{s}</span>
+              <span
+                style={{
+                  fontSize: "12px",
+                  textTransform: "capitalize",
+                  color:
+                    i < currentIndex
+                      ? "#4ade80"
+                      : s === stage
+                      ? "white"
+                      : "rgba(200,180,255,0.5)",
+                  fontWeight: s === stage ? 600 : 400,
+                }}
+              >
+                {s}
+              </span>
             </div>
           ))}
         </div>
       </div>
 
       {/* Main */}
-      <div className="flex-1 p-10 overflow-y-auto">
+      <div style={{ flex: 1, padding: "32px 40px", overflowY: "auto" }}>
+        {/* Sibling context banner */}
         {problem?.sibling_traces && problem.sibling_traces.length > 0 && (
-          <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 mb-4">
-            <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-1">
+          <div
+            style={{
+              background: "#fffbeb",
+              border: "1px solid #fde68a",
+              borderRadius: "10px",
+              padding: "10px 14px",
+              marginBottom: "16px",
+            }}
+          >
+            <p
+              style={{
+                fontSize: "10px",
+                fontWeight: 700,
+                color: "#d97706",
+                textTransform: "uppercase",
+                letterSpacing: "0.06em",
+                margin: "0 0 2px",
+              }}
+            >
               Context from previous parts
             </p>
-            <p className="text-sm text-amber-800">
+            <p style={{ fontSize: "13px", color: "#92400e", margin: 0 }}>
               ThinkTrace AI has full context from{" "}
               {problem.sibling_traces
                 .map((s) => `Problem ${s.problem_number}`)
@@ -486,47 +1366,118 @@ function WorkspaceProblemInner() {
 
         {/* Problem card */}
         <div
-          className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 mb-6 select-none"
-          style={{ userSelect: "none" }}
+          style={{
+            background: "white",
+            borderRadius: "16px",
+            padding: "22px",
+            border: "1px solid rgba(26,18,8,0.06)",
+            marginBottom: "18px",
+            userSelect: "none",
+          }}
           onCopy={(e) => e.preventDefault()}
           onContextMenu={(e) => e.preventDefault()}
         >
           <button
             onClick={() => router.back()}
-            className="text-sm text-gray-400 hover:text-gray-600 mb-4"
+            style={{
+              fontSize: "13px",
+              color: "#8a7a6a",
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              marginBottom: "12px",
+              padding: 0,
+            }}
           >
             ← Back
           </button>
-          <div className="flex items-center gap-3 mb-3">
-            <h1 className="text-xl font-bold text-gray-800">
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "10px",
+              marginBottom: "10px",
+            }}
+          >
+            <h1
+              style={{
+                fontSize: "18px",
+                fontWeight: 700,
+                color: "#1a1208",
+                margin: 0,
+                fontFamily: "Georgia, serif",
+              }}
+            >
               Problem {problem?.problem_number}
             </h1>
             {currentPart && (
-              <span className="text-sm font-semibold px-3 py-1 rounded-full bg-gray-100 text-gray-600">
+              <span
+                style={{
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  padding: "3px 10px",
+                  borderRadius: "100px",
+                  background: "#f3f4f6",
+                  color: "#6b7280",
+                }}
+              >
                 Part ({currentPart.part_label})
               </span>
             )}
           </div>
           {problem?.parts && problem.parts.length > 0 && (
-            <div className="text-gray-400 text-sm mb-3 pb-3 border-b border-gray-100">
+            <div
+              style={{
+                color: "#8a7a6a",
+                fontSize: "13px",
+                marginBottom: "10px",
+                paddingBottom: "10px",
+                borderBottom: "1px solid #f0ece6",
+              }}
+            >
               {renderMath(problem.problem_text)}
             </div>
           )}
-          <div className="text-gray-700 leading-relaxed font-medium">
+          <div
+            style={{
+              color: "#1a1208",
+              lineHeight: 1.6,
+              fontWeight: 500,
+              fontSize: "14px",
+            }}
+          >
             {renderMath(activeProblemText)}
           </div>
         </div>
 
         {/* Part complete banner */}
         {partComplete && !allPartsComplete && (
-          <div className="bg-green-50 border border-green-200 rounded-2xl p-6 mb-6 flex items-center justify-between">
+          <div
+            style={{
+              background: "#f0fdf4",
+              border: "1px solid #bbf7d0",
+              borderRadius: "16px",
+              padding: "20px 24px",
+              marginBottom: "18px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+            }}
+          >
             <div>
-              <p className="font-bold text-green-800 text-lg">
-                Part ({currentPart?.part_label}) Complete! 🎉
+              <p
+                style={{
+                  fontWeight: 700,
+                  color: "#166534",
+                  fontSize: "16px",
+                  margin: "0 0 4px",
+                }}
+              >
+                Part ({currentPart?.part_label}) Complete!
               </p>
-              <p className="text-green-600 text-sm mt-1">
+              <p style={{ color: "#16a34a", fontSize: "13px", margin: 0 }}>
                 {isLastPart
-                  ? "You've completed all parts."
+                  ? "You have completed all parts."
                   : `Ready for Part (${
                       problem?.parts[currentPartIndex + 1]?.part_label
                     })`}
@@ -534,8 +1485,16 @@ function WorkspaceProblemInner() {
             </div>
             <button
               onClick={handleNextPart}
-              className="px-6 py-3 rounded-xl text-white font-semibold hover:opacity-90 transition"
-              style={{ backgroundColor: modeInfo.color }}
+              style={{
+                padding: "11px 22px",
+                borderRadius: "10px",
+                background: GRAD,
+                color: "white",
+                fontSize: "14px",
+                fontWeight: 600,
+                border: "none",
+                cursor: "pointer",
+              }}
             >
               {isLastPart
                 ? "Finish Problem"
@@ -548,19 +1507,55 @@ function WorkspaceProblemInner() {
 
         {/* Stage workspace */}
         {!partComplete && (
-          <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-lg font-bold text-gray-800 capitalize">
+          <div
+            style={{
+              background: "white",
+              borderRadius: "16px",
+              padding: "22px",
+              border: "1px solid rgba(26,18,8,0.06)",
+            }}
+          >
+            {/* Stage header */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                marginBottom: "14px",
+              }}
+            >
+              <h2
+                style={{
+                  fontSize: "16px",
+                  fontWeight: 700,
+                  color: "#1a1208",
+                  textTransform: "capitalize",
+                  margin: 0,
+                  fontFamily: "Georgia, serif",
+                }}
+              >
                 {stage}
               </h2>
               <div
-                className={`flex items-center gap-2 px-3 py-1 rounded-full text-sm font-semibold ${
-                  timerDone
-                    ? "bg-green-100 text-green-600"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  padding: "5px 12px",
+                  borderRadius: "100px",
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  background: timerDone
+                    ? "#f0fdf4"
                     : timeLeft < 60
-                    ? "bg-red-100 text-red-500"
-                    : "bg-orange-100 text-orange-500"
-                }`}
+                    ? "#fef2f2"
+                    : "#fff7ed",
+                  color: timerDone
+                    ? "#16a34a"
+                    : timeLeft < 60
+                    ? "#ef4444"
+                    : "#d97706",
+                }}
               >
                 {timerDone
                   ? "✓ Time complete"
@@ -568,13 +1563,61 @@ function WorkspaceProblemInner() {
               </div>
             </div>
 
-            <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 mb-4">
-              <p className="text-xs font-semibold text-blue-600 uppercase tracking-wide mb-1">
+            {/* Objective */}
+            <div
+              style={{
+                background: `${PURPLE}08`,
+                border: `1px solid ${PURPLE}18`,
+                borderRadius: "10px",
+                padding: "12px 14px",
+                marginBottom: "16px",
+              }}
+            >
+              <p
+                style={{
+                  fontSize: "9px",
+                  fontWeight: 700,
+                  color: PURPLE,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.08em",
+                  margin: "0 0 4px",
+                }}
+              >
                 Objective
               </p>
-              <p className="text-sm text-blue-800">{STAGE_OBJECTIVES[stage]}</p>
+              <p
+                style={{
+                  fontSize: "13px",
+                  color: "#3b1e6e",
+                  lineHeight: 1.5,
+                  margin: 0,
+                }}
+              >
+                {STAGE_OBJECTIVES[stage]}
+              </p>
             </div>
 
+            {/* Progress bar */}
+            <div
+              style={{
+                height: "3px",
+                background: "#f0ece6",
+                borderRadius: "2px",
+                marginBottom: "16px",
+              }}
+            >
+              <div
+                style={{
+                  height: "100%",
+                  borderRadius: "2px",
+                  width: `${(currentIndex / stages.length) * 100}%`,
+                  background: GRAD,
+                  transition: "width 0.5s ease",
+                }}
+              />
+            </div>
+
+            {/* Input */}
             {!conversing && (
               <MathInput
                 value={studentInput}
@@ -584,55 +1627,90 @@ function WorkspaceProblemInner() {
               />
             )}
 
+            {/* Conversation */}
             {currentStageMessages.length > 0 && (
-              <div className="mt-4 flex flex-col gap-3">
+              <div
+                style={{
+                  marginTop: "14px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "10px",
+                }}
+              >
                 {currentStageMessages.map((msg, index) => (
                   <div
                     key={index}
-                    className={`p-3 rounded-xl text-sm ${
-                      msg.role === "student"
-                        ? "bg-gray-50 border border-gray-200 text-gray-700 ml-8"
-                        : "border text-gray-700 mr-8"
-                    }`}
-                    style={
-                      msg.role === "ai"
-                        ? {
-                            backgroundColor: `${modeInfo.color}08`,
-                            borderColor: `${modeInfo.color}30`,
-                          }
-                        : {}
-                    }
+                    style={{
+                      padding: "12px 14px",
+                      borderRadius: "12px",
+                      fontSize: "13px",
+                      lineHeight: 1.6,
+                      marginLeft: msg.role === "student" ? "24px" : "0",
+                      marginRight: msg.role === "ai" ? "24px" : "0",
+                      background:
+                        msg.role === "student" ? "#f8f9fc" : `${PURPLE}08`,
+                      border: `1px solid ${
+                        msg.role === "student"
+                          ? "rgba(26,18,8,0.06)"
+                          : `${PURPLE}18`
+                      }`,
+                      animation: "fadeUp 0.3s ease",
+                    }}
                   >
                     <p
-                      className="text-xs font-semibold mb-1"
                       style={{
-                        color:
-                          msg.role === "student" ? "#6b7280" : modeInfo.color,
+                        fontSize: "10px",
+                        fontWeight: 700,
+                        margin: "0 0 5px",
+                        color: msg.role === "student" ? "#9ca3af" : PURPLE,
                       }}
                     >
                       {msg.role === "student" ? "You" : "ThinkTrace AI"}
                     </p>
-                    <div>{renderMath(msg.content || "")}</div>
+                    <div
+                      style={{
+                        color: msg.role === "student" ? "#374151" : "#3b1e6e",
+                      }}
+                    >
+                      {renderMath(msg.content || "")}
+                    </div>
                   </div>
                 ))}
                 {understood && timerDone && (
-                  <p className="text-green-500 text-sm font-medium mt-1">
+                  <p
+                    style={{
+                      fontSize: "13px",
+                      fontWeight: 600,
+                      color: "#16a34a",
+                    }}
+                  >
                     ✓ Ready for next stage
                   </p>
                 )}
                 {understood && !timerDone && (
-                  <p className="text-orange-500 text-sm font-medium mt-1">
+                  <p
+                    style={{
+                      fontSize: "13px",
+                      fontWeight: 600,
+                      color: "#d97706",
+                    }}
+                  >
                     ✓ Stage complete — waiting for timer
                   </p>
                 )}
               </div>
             )}
 
+            {/* Response input */}
             {conversing && !understood && (
-              <div className="mt-4">
+              <div style={{ marginTop: "14px" }}>
                 <p
-                  className="text-sm font-medium mb-2"
-                  style={{ color: modeInfo.color }}
+                  style={{
+                    fontSize: "13px",
+                    fontWeight: 600,
+                    color: PURPLE,
+                    margin: "0 0 8px",
+                  }}
                 >
                   Your response:
                 </p>
@@ -646,8 +1724,16 @@ function WorkspaceProblemInner() {
               </div>
             )}
 
-            <div className="flex justify-between items-center mt-4">
-              <p className="text-sm text-gray-400">
+            {/* Footer */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                marginTop: "16px",
+              }}
+            >
+              <p style={{ fontSize: "12px", color: "#8a7a6a", margin: 0 }}>
                 {hasMultipleParts && `Part (${currentPart?.part_label}) · `}
                 Stage {currentIndex + 1} of {stages.length}
               </p>
@@ -660,8 +1746,24 @@ function WorkspaceProblemInner() {
                       ? aiResponse.trim() === ""
                       : studentInput.trim() === ""))
                 }
-                className="text-white px-8 py-3 rounded-xl font-semibold transition disabled:opacity-40 hover:opacity-90"
-                style={{ backgroundColor: modeInfo.color }}
+                style={{
+                  padding: "11px 28px",
+                  borderRadius: "10px",
+                  background: GRAD,
+                  color: "white",
+                  fontSize: "14px",
+                  fontWeight: 600,
+                  border: "none",
+                  cursor: "pointer",
+                  opacity:
+                    submitting ||
+                    (!canContinue &&
+                      (conversing
+                        ? aiResponse.trim() === ""
+                        : studentInput.trim() === ""))
+                      ? 0.4
+                      : 1,
+                }}
               >
                 {submitting
                   ? "..."
@@ -687,8 +1789,16 @@ export default function WorkspaceProblemPage() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen bg-[#f8f9fc] p-10 text-gray-500">
-          Loading...
+        <div
+          style={{
+            minHeight: "100vh",
+            background: "#f8f9fc",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <p style={{ color: "#8a7a6a" }}>Loading...</p>
         </div>
       }
     >

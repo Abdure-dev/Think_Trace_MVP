@@ -369,14 +369,76 @@ async def create_workspace(
     }
 
 
-@router.get('/workspaces')
-async def get_workspaces(current_user=Security(get_current_user)):
-    workspaces = client.table("Personal_Workspaces") \
-        .select("*") \
-        .eq("user_id", current_user["id"]) \
-        .order("created_at", desc=True) \
-        .execute()
-    return workspaces.data
+@router.post('/workspaces')
+async def create_workspace(
+    title: str = Form(...),
+    mode: str = Form("guided"),
+    source_type: str = Form(...),
+    raw_text: str = Form(None),
+    file: UploadFile = File(None),
+    subject: str = Form(None),
+    term_type: str = Form(None),
+    term_name: str = Form(None),
+    term_year: int = Form(None),
+    current_user=Security(get_current_user)
+):
+    if mode not in ("deep_focus", "guided", "open"):
+        raise HTTPException(status_code=400, detail="Invalid mode")
+    if source_type not in ("pdf", "image", "text"):
+        raise HTTPException(status_code=400, detail="Invalid source_type")
+
+    extracted_text = ""
+    if source_type == "text":
+        if not raw_text:
+            raise HTTPException(status_code=400, detail="raw_text required")
+        extracted_text = raw_text
+    elif source_type == "pdf":
+        if not file:
+            raise HTTPException(status_code=400, detail="File required")
+        extracted_text = extract_text_from_pdf(await file.read())
+    elif source_type == "image":
+        if not file:
+            raise HTTPException(status_code=400, detail="File required")
+        extracted_text = extract_text_from_image(await file.read(), file.content_type or "image/jpeg")
+
+    workspace = client.table("Personal_Workspaces").insert({
+        "user_id": current_user["id"],
+        "title": title,
+        "mode": mode,
+        "subject": subject,
+        "term_type": term_type,
+        "term_name": term_name,
+        "term_year": term_year,
+    }).execute()
+
+    workspace_id = workspace.data[0]["id"]
+    problems = extract_problems_structured(extracted_text)
+
+    for prob in problems:
+        problem_row = client.table("Workspace_Problems").insert({
+            "workspace_id": workspace_id,
+            "problem_number": prob["problem_number"],
+            "problem_text": prob["main_text"],
+        }).execute()
+
+        problem_id = problem_row.data[0]["id"]
+
+        if prob.get("parts"):
+            part_rows = [
+                {
+                    "problem_id": problem_id,
+                    "part_label": p["label"],
+                    "part_text": p["text"],
+                    "part_number": i + 1,
+                }
+                for i, p in enumerate(prob["parts"])
+            ]
+            client.table("Workspace_Problem_Parts").insert(part_rows).execute()
+
+    return {
+        "workspace": workspace.data[0],
+        "problem_count": len(problems)
+    }
 
 
 @router.get('/workspaces/{workspace_id}')
@@ -519,3 +581,104 @@ async def get_workspace_problem(problem_id: str, current_user=Security(get_curre
         "siblings": siblings.data,
         "sibling_traces": sibling_traces
     }
+@router.delete('/workspaces/{workspace_id}')
+async def delete_workspace(workspace_id: str, current_user=Security(get_current_user)):
+    workspace = client.table("Personal_Workspaces").select("id").eq("id", workspace_id).eq("user_id", current_user["id"]).execute()
+    if not workspace.data:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
+    # Delete all traces, parts, problems, then workspace
+    problems = client.table("Workspace_Problems").select("id").eq("workspace_id", workspace_id).execute()
+    for p in problems.data:
+        client.table("Workspace_Traces").delete().eq("problem_id", p["id"]).execute()
+        client.table("Workspace_Problem_Parts").delete().eq("problem_id", p["id"]).execute()
+    client.table("Workspace_Problems").delete().eq("workspace_id", workspace_id).execute()
+    client.table("Personal_Workspaces").delete().eq("id", workspace_id).execute()
+
+    return {"deleted": True}
+
+
+@router.post('/workspace-problems/{problem_id}/summary')
+async def generate_problem_summary(
+    problem_id: str,
+    body: dict,
+    current_user=Security(get_current_user)
+):
+    problem = client.table("Workspace_Problems").select("*").eq("id", problem_id).execute()
+    if not problem.data:
+        raise HTTPException(status_code=404, detail="Problem not found")
+
+    # Get all traces for this problem
+    traces = client.table("Workspace_Traces").select("*").eq("problem_id", problem_id).eq("user_id", current_user["id"]).order("created_at").execute()
+
+    # Group by stage
+    stages = ["understand", "concept", "plan", "attempt", "critique", "reflection"]
+    stage_traces: dict = {s: [] for s in stages}
+    for t in traces.data:
+        s = t.get("stage", "")
+        if s in stage_traces:
+            stage_traces[s].append(t.get("content", ""))
+
+    problem_text = problem.data[0]["problem_text"]
+    conversation_history = body.get("conversation_history", [])
+
+    # Build history text
+    history_text = ""
+    for msg in conversation_history:
+        role = msg.get("role", "")
+        content = msg.get("content", "")
+        stage = msg.get("stage", "")
+        if not content or role == "system":
+            continue
+        role_label = "Student" if role == "student" else "ThinkTrace AI"
+        history_text += f"\n[{stage.upper()}] {role_label}: {content}"
+
+    prompt = f"""You are an insightful academic coach reviewing a student's complete reasoning trace for a problem.
+
+PROBLEM: {problem_text}
+
+STUDENT'S FULL REASONING TRACE:
+{history_text}
+
+Generate a structured JSON summary of this student's reasoning journey. Be specific, insightful, and genuinely helpful. Reference what they actually wrote.
+
+Return ONLY valid JSON in this exact format:
+{{
+  "stage_insights": {{
+    "understand": "2-3 sentence insight about how well they understood the problem. What did they grasp? What did they miss?",
+    "concept": "2-3 sentence insight about their conceptual reasoning. Did they identify the right approach? How strong was their justification?",
+    "plan": "2-3 sentence insight about their planning. Was it concrete and logical? What was strong or weak?",
+    "attempt": "2-3 sentence insight about their execution. Did they follow their plan? Where did they struggle or excel?",
+    "critique": "2-3 sentence insight about their critical thinking. How deeply did they examine their own work?",
+    "reflection": "2-3 sentence insight about their reflection. What genuine learning did they demonstrate?"
+  }},
+  "key_insight": "The single most important thing this student demonstrated or learned in this problem. Be specific and reference their actual reasoning.",
+  "strongest_stage": "understand|concept|plan|attempt|critique|reflection",
+  "weakest_stage": "understand|concept|plan|attempt|critique|reflection",
+  "growth_note": "One specific, actionable thing this student should focus on to improve their reasoning on similar problems.",
+  "overall_score": 7
+}}
+
+overall_score is 1-10 based on depth, genuine engagement, and quality of reasoning across all stages."""
+
+    response = call_gemini(prompt)
+    text = response.text.strip()
+    text = re.sub(r'```json\n?', '', text)
+    text = re.sub(r'```\n?', '', text)
+
+    match = re.search(r'\{.*\}', text, re.DOTALL)
+    if match:
+        try:
+            summary = json.loads(match.group())
+        except json.JSONDecodeError:
+            summary = {"key_insight": "Unable to generate summary.", "stage_insights": {}, "overall_score": 0, "growth_note": "", "strongest_stage": "", "weakest_stage": ""}
+    else:
+        summary = {"key_insight": "Unable to generate summary.", "stage_insights": {}, "overall_score": 0, "growth_note": "", "strongest_stage": "", "weakest_stage": ""}
+
+    # Save to DB
+    client.table("Workspace_Problems").update({
+        "ai_summary": json.dumps(summary),
+        "summary_generated_at": "now()",
+    }).eq("id", problem_id).execute()
+
+    return summary
