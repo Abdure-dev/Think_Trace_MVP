@@ -87,150 +87,138 @@ def call_gemini(contents, retries=3):
     )
 
 
-def preprocess_and_split(raw_text: str) -> str:
-    """Pre-process raw text to insert clear separators before each problem."""
-    # Remove everything before the first problem marker
-    cleaned = re.sub(
-        r'^.*?(?=PROBLEM\s+\d|Problem\s+\d+\.?|\bQ\d+\b|\bQuestion\s+\d)',
-        '',
-        raw_text,
-        count=1,
-        flags=re.DOTALL | re.IGNORECASE
-    )
-    if not cleaned.strip():
-        cleaned = raw_text  # fallback to original
-
-    # Insert clear separators before each problem marker
-    cleaned = re.sub(
-        r'(PROBLEM\s+\d+|Problem\s+\d+\.?|Question\s+\d+\.?|Q\d+\.)',
-        r'\n\n===PROBLEM_SEPARATOR===\n\1',
-        cleaned,
-        flags=re.IGNORECASE
-    )
-
-    # Also handle simple numbered patterns like "1." or "1)" at start of line
-    cleaned = re.sub(
-        r'(?m)^(\d+[\.\)]\s+[A-Z])',
-        r'\n===PROBLEM_SEPARATOR===\n\1',
-        cleaned
-    )
-
-    return cleaned
+def parse_problems_from_response(text: str) -> list[dict]:
+    text = re.sub(r'```json\s*', '', text)
+    text = re.sub(r'```\s*', '', text)
+    text = text.strip()
+    start = text.find('[')
+    end = text.rfind(']') + 1
+    if start == -1 or end == 0:
+        return []
+    problems = json.loads(text[start:end])
+    if not isinstance(problems, list) or len(problems) == 0:
+        return []
+    valid = []
+    for i, p in enumerate(problems):
+        if isinstance(p, dict):
+            valid.append({
+                "problem_number": p.get("problem_number", i + 1),
+                "main_text": p.get("main_text", p.get("description", p.get("text", ""))),
+                "parts": p.get("parts", [])
+            })
+    return valid
 
 
-def extract_problems_structured(raw_text: str) -> list[dict]:
-    cleaned = preprocess_and_split(raw_text)
-
-    prompt = f"""You are extracting problems from academic content.
-
-The text below has been pre-processed. Each section starting with "===PROBLEM_SEPARATOR===" is a SEPARATE individual problem.
+EXTRACTION_PROMPT = f"""You are reading an academic assignment. Extract every problem as a separate structured entry.
 
 CRITICAL RULES:
-1. Each "===PROBLEM_SEPARATOR===" marks exactly ONE new separate problem — never merge them
-2. Skip any course header, instructions, grading policy, or administrative text before the first separator
-3. Sub-parts (a), (b), (c) go in the "parts" array of their parent problem
-4. Count the separators to know exactly how many problems there are
-5. If there are 4 separators, return exactly 4 entries
+1. SKIP the course header, instructor name, due date, submission instructions, collaboration policy, and ANY administrative text — these are NOT problems
+2. Only extract actual numbered problems/questions that students need to solve
+3. Each problem MUST be its own SEPARATE entry — NEVER merge multiple problems together
+4. Count the problems carefully — if you see PROBLEM 1, PROBLEM 2, PROBLEM 3, PROBLEM 4 return exactly 4 entries
+5. Sub-parts (a), (b), (c) go in the "parts" array of their parent problem
+6. Include ALL text within each problem including definitions, algorithms, or context for that specific problem
 
 {LATEX_RULES}
 
-Return ONLY a valid JSON array, no markdown, no backticks:
+Return ONLY a valid JSON array, no markdown, no backticks, nothing else:
 [
   {{
     "problem_number": 1,
-    "main_text": "Full problem statement WITHOUT sub-parts text",
+    "main_text": "Full problem statement here without sub-part text",
     "parts": [
-      {{"label": "a", "text": "Full text of part a with enough context to understand standalone"}},
-      {{"label": "b", "text": "Full text of part b with enough context to understand standalone"}}
+      {{"label": "a", "text": "Full text of part a with all context needed to understand standalone"}},
+      {{"label": "b", "text": "Full text of part b with all context needed to understand standalone"}}
     ]
   }},
   {{
     "problem_number": 2,
-    "main_text": "Problem with no sub-parts — full text here",
+    "main_text": "Full problem text if no sub-parts",
     "parts": []
   }}
 ]
 
+REMINDER: Skip headers and instructions. Only extract actual problems. Each problem is a SEPARATE entry. Return ONLY the JSON array."""
+
+
+def extract_and_structure_from_pdf(file_bytes: bytes) -> list[dict]:
+    for attempt in range(3):
+        try:
+            response = call_gemini([
+                types.Part.from_bytes(data=file_bytes, mime_type="application/pdf"),
+                EXTRACTION_PROMPT
+            ])
+            problems = parse_problems_from_response(response.text)
+            if problems:
+                print(f"Extracted {len(problems)} problems from PDF")
+                return problems
+            print(f"Empty result on attempt {attempt + 1}, retrying...")
+            time.sleep(2)
+        except json.JSONDecodeError as e:
+            print(f"JSON error on attempt {attempt + 1}: {e}")
+            time.sleep(2)
+        except Exception as e:
+            print(f"PDF extraction error on attempt {attempt + 1}: {e}")
+            time.sleep(2)
+    return [{"problem_number": 1, "main_text": "Failed to extract problems. Please try again.", "parts": []}]
+
+
+def extract_and_structure_from_image(file_bytes: bytes, mime_type: str) -> list[dict]:
+    for attempt in range(3):
+        try:
+            response = call_gemini([
+                types.Part.from_bytes(data=file_bytes, mime_type=mime_type),
+                EXTRACTION_PROMPT
+            ])
+            problems = parse_problems_from_response(response.text)
+            if problems:
+                print(f"Extracted {len(problems)} problems from image")
+                return problems
+            time.sleep(2)
+        except Exception as e:
+            print(f"Image extraction error on attempt {attempt + 1}: {e}")
+            time.sleep(2)
+    return [{"problem_number": 1, "main_text": "Failed to extract problems. Please try again.", "parts": []}]
+
+
+def extract_problems_structured(raw_text: str) -> list[dict]:
+    prompt = f"""You are extracting problems from academic text. Each numbered problem is a SEPARATE entry.
+
+CRITICAL RULES:
+1. Every distinct numbered problem MUST be its own SEPARATE entry
+2. NEVER merge multiple problems into one entry
+3. Sub-parts (a), (b), (c) go in the parts array
+
+{LATEX_RULES}
+
+Return ONLY a valid JSON array:
+[
+  {{
+    "problem_number": 1,
+    "main_text": "Full problem statement without sub-parts",
+    "parts": [
+      {{"label": "a", "text": "Full text of part a"}},
+      {{"label": "b", "text": "Full text of part b"}}
+    ]
+  }}
+]
+
 Content:
+{raw_text}
 
-{cleaned}
-
-REMINDER: Each ===PROBLEM_SEPARATOR=== is a new separate problem. Return ONLY the JSON array."""
+Return ONLY the JSON array."""
 
     for attempt in range(3):
         try:
             response = call_gemini(prompt)
-            text = response.text.strip()
-            text = re.sub(r'```json\s*', '', text)
-            text = re.sub(r'```\s*', '', text)
-            text = text.strip()
-
-            start = text.find('[')
-            end = text.rfind(']') + 1
-            if start == -1 or end == 0:
-                print(f"No JSON array found on attempt {attempt + 1}, retrying...")
-                time.sleep(2)
-                continue
-
-            problems = json.loads(text[start:end])
-
-            if isinstance(problems, list) and len(problems) > 0:
-                valid = []
-                for i, p in enumerate(problems):
-                    if isinstance(p, dict):
-                        valid.append({
-                            "problem_number": p.get("problem_number", i + 1),
-                            "main_text": p.get("main_text", p.get("description", p.get("text", ""))),
-                            "parts": p.get("parts", [])
-                        })
-                if valid:
-                    print(f"Successfully extracted {len(valid)} problems")
-                    return valid
-
-        except json.JSONDecodeError as e:
-            print(f"JSON parse error on attempt {attempt + 1}: {e}")
+            problems = parse_problems_from_response(response.text)
+            if problems:
+                return problems
             time.sleep(2)
         except Exception as e:
-            print(f"Extraction error on attempt {attempt + 1}: {e}")
+            print(f"Text extraction error attempt {attempt + 1}: {e}")
             time.sleep(2)
-
-    print("All extraction attempts failed, returning raw text as single problem")
     return [{"problem_number": 1, "main_text": raw_text[:3000], "parts": []}]
-
-
-def extract_text_from_pdf(file_bytes: bytes) -> str:
-    response = call_gemini([
-        types.Part.from_bytes(data=file_bytes, mime_type="application/pdf"),
-        f"""Extract ALL text from this document exactly as it appears.
-
-CRITICAL STRUCTURE RULES:
-- Preserve ALL problem numbers exactly as they appear: "PROBLEM 1", "Problem 1", "1." etc
-- Keep a blank line between each problem so they are clearly separated
-- Preserve sub-parts (a), (b), (c) exactly under their parent problem
-- Do NOT skip, summarize, or merge any content
-- Include the full text of every problem including all sub-parts
-- Return raw extracted text only, no commentary
-
-{LATEX_RULES}"""
-    ])
-    return response.text.strip()
-
-
-def extract_text_from_image(file_bytes: bytes, mime_type: str) -> str:
-    response = call_gemini([
-        types.Part.from_bytes(data=file_bytes, mime_type=mime_type),
-        f"""Extract ALL text from this image exactly as it appears.
-
-CRITICAL STRUCTURE RULES:
-- Preserve ALL problem numbers exactly as they appear
-- Keep a blank line between each problem
-- Preserve sub-parts (a), (b), (c) exactly under their parent problem
-- Do NOT skip, summarize, or merge any content
-- Return raw extracted text only, no commentary
-
-{LATEX_RULES}"""
-    ])
-    return response.text.strip()
 
 
 STAGE_DEFINITIONS = {
@@ -419,30 +407,30 @@ async def create_assignment(
     if source_type not in ("pdf", "image", "text"):
         raise HTTPException(status_code=400, detail="source_type must be pdf, image, or text")
 
-    extracted_text = ""
+    problems = []
+
     if source_type == "text":
         if not raw_text:
             raise HTTPException(status_code=400, detail="raw_text required")
-        extracted_text = raw_text
+        problems = extract_problems_structured(raw_text)
     elif source_type == "pdf":
         if not file:
             raise HTTPException(status_code=400, detail="File required")
-        extracted_text = extract_text_from_pdf(await file.read())
+        problems = extract_and_structure_from_pdf(await file.read())
     elif source_type == "image":
         if not file:
             raise HTTPException(status_code=400, detail="File required")
-        extracted_text = extract_text_from_image(await file.read(), file.content_type or "image/jpeg")
+        problems = extract_and_structure_from_image(await file.read(), file.content_type or "image/jpeg")
 
     assignment = client.table("Assignments").insert({
         "course_id": course_id,
         "title": title,
         "uploaded_by": current_user["id"],
         "source_type": source_type,
-        "raw_text": extracted_text,
+        "raw_text": "",
     }).execute()
 
     assignment_id = assignment.data[0]["id"]
-    problems = extract_problems_structured(extracted_text)
 
     for prob in problems:
         problem_row = client.table("Problems").insert({
@@ -578,19 +566,19 @@ async def add_problems(
     if source_type not in ("pdf", "image", "text"):
         raise HTTPException(status_code=400, detail="Invalid source_type")
 
-    extracted_text = ""
+    problems = []
     if source_type == "text":
         if not raw_text:
             raise HTTPException(status_code=400, detail="raw_text required")
-        extracted_text = raw_text
+        problems = extract_problems_structured(raw_text)
     elif source_type == "pdf":
         if not file:
             raise HTTPException(status_code=400, detail="File required")
-        extracted_text = extract_text_from_pdf(await file.read())
+        problems = extract_and_structure_from_pdf(await file.read())
     elif source_type == "image":
         if not file:
             raise HTTPException(status_code=400, detail="File required")
-        extracted_text = extract_text_from_image(await file.read(), file.content_type)
+        problems = extract_and_structure_from_image(await file.read(), file.content_type)
 
     existing = client.table("Problems") \
         .select("problem_number") \
@@ -600,7 +588,6 @@ async def add_problems(
         .execute()
 
     start_index = existing.data[0]["problem_number"] if existing.data else 0
-    problems = extract_problems_structured(extracted_text)
 
     for i, prob in enumerate(problems):
         problem_row = client.table("Problems").insert({
