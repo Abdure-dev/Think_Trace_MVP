@@ -6,92 +6,194 @@ from google.genai import types
 import os
 import json
 import re
+import time
 from app.schemas import AIGuidanceRequest
 
 router = APIRouter()
 
 client_ai = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
+MODELS = [
+    "models/gemini-2.5-flash",
+    "models/gemini-2.0-flash",
+    "models/gemini-2.0-flash-lite",
+]
 
-def call_gemini(contents):
-    for model in [
-        "gemini-2.5-flash",
-        "gemini-2.0-flash",
-        "gemini-1.5-flash",
-        "gemini-1.5-pro",
-    ]:
-        try:
-            return client_ai.models.generate_content(model=model, contents=contents)
-        except Exception as e:
-            print(f"Model {model} failed: {e}")
-            continue
-    raise HTTPException(status_code=503, detail="AI service temporarily unavailable. Please try again.")
+LATEX_RULES = """LATEX CONVERSION RULES — apply every single one:
+
+GREEK LETTERS: α→$\\alpha$, β→$\\beta$, γ→$\\gamma$, δ→$\\delta$, ε→$\\epsilon$, ζ→$\\zeta$, η→$\\eta$, θ→$\\theta$, λ→$\\lambda$, μ→$\\mu$, ν→$\\nu$, π→$\\pi$, ρ→$\\rho$, σ→$\\sigma$, τ→$\\tau$, φ→$\\phi$, χ→$\\chi$, ψ→$\\psi$, ω→$\\omega$, Γ→$\\Gamma$, Δ→$\\Delta$, Θ→$\\Theta$, Λ→$\\Lambda$, Π→$\\Pi$, Σ→$\\Sigma$, Φ→$\\Phi$, Ψ→$\\Psi$, Ω→$\\Omega$
+
+SUPERSCRIPTS AND SUBSCRIPTS: n²→$n^2$, n³→$n^3$, x^n→$x^n$, a_i→$a_i$, x_{ij}→$x_{ij}$, A^T→$A^T$, A^{-1}→$A^{-1}$
+
+FRACTIONS: a/b in math context→$\\frac{a}{b}$, 1/2→$\\frac{1}{2}$, n/2→$\\frac{n}{2}$
+
+ROOTS: √n→$\\sqrt{n}$, √(a+b)→$\\sqrt{a+b}$, ∛n→$\\sqrt[3]{n}$
+
+SUMMATION AND PRODUCTS: ∑→$\\sum_{i=1}^{n}$, ∏→$\\prod_{i=1}^{n}$, ∫→$\\int$, ∫_a^b→$\\int_a^b$
+
+SET NOTATION: ∈→$\\in$, ∉→$\\notin$, ⊆→$\\subseteq$, ⊂→$\\subset$, ⊇→$\\supseteq$, ∪→$\\cup$, ∩→$\\cap$, ∅→$\\emptyset$, ℝ→$\\mathbb{R}$, ℤ→$\\mathbb{Z}$, ℕ→$\\mathbb{N}$, ℚ→$\\mathbb{Q}$, ℂ→$\\mathbb{C}$
+
+LOGIC: ∀→$\\forall$, ∃→$\\exists$, ¬→$\\neg$, ∧→$\\land$, ∨→$\\lor$, →→$\\rightarrow$, ↔→$\\leftrightarrow$, ⟹→$\\Rightarrow$, ⟺→$\\Leftrightarrow$
+
+RELATIONS: ≤→$\\leq$, ≥→$\\geq$, ≠→$\\neq$, ≈→$\\approx$, ≡→$\\equiv$, ∝→$\\propto$, ≪→$\\ll$, ≫→$\\gg$
+
+ARROWS: →→$\\to$, ←→$\\leftarrow$, ↑→$\\uparrow$, ↓→$\\downarrow$, ↦→$\\mapsto$
+
+MATRICES AND VECTORS:
+- Column vector: write as $\\begin{pmatrix} a \\\\ b \\\\ c \\end{pmatrix}$
+- Row vector: write as $\\begin{pmatrix} a & b & c \\end{pmatrix}$
+- Matrix: write as $\\begin{pmatrix} a & b \\\\ c & d \\end{pmatrix}$ or $\\begin{bmatrix} a & b \\\\ c & d \\end{bmatrix}$
+- Determinant: $\\det(A)$ or $|A|$
+- Transpose: $A^T$
+- Inverse: $A^{-1}$
+- Norm: $\\|v\\|$ or $\\|v\\|_2$
+- Dot product: $u \\cdot v$
+- Cross product: $u \\times v$
+- Bold vectors: $\\mathbf{v}$ or $\\vec{v}$
+
+LINEAR ALGEBRA:
+- Span: $\\text{span}\\{v_1, v_2\\}$
+- Rank: $\\text{rank}(A)$
+- Null space: $\\text{null}(A)$ or $\\ker(A)$
+- Column space: $\\text{col}(A)$
+- Row space: $\\text{row}(A)$
+- Eigenvalue equation: $Av = \\lambda v$
+- Characteristic polynomial: $\\det(A - \\lambda I)$
+- Inner product: $\\langle u, v \\rangle$
+- Orthogonal: $u \\perp v$
+- Linear transformation: $T: \\mathbb{R}^n \\to \\mathbb{R}^m$
+
+CALCULUS:
+- Derivative: $\\frac{d}{dx}$, $f'(x)$, $\\frac{df}{dx}$
+- Partial derivative: $\\frac{\\partial f}{\\partial x}$
+- Gradient: $\\nabla f$
+- Laplacian: $\\nabla^2 f$
+- Limit: $\\lim_{x \\to a}$
+- Infinity: ∞→$\\infty$
+
+COMPLEXITY AND FUNCTIONS:
+- Big-O: O(n)→$O(n)$, Ω(n)→$\\Omega(n)$, Θ(n)→$\\Theta(n)$
+- Floor/ceiling: ⌊x⌋→$\\lfloor x \\rfloor$, ⌈x⌉→$\\lceil x \\rceil$
+- Absolute value: |x|→$|x|$ or $\\lvert x \\rvert$
+- Log: log_b(n)→$\\log_b n$, ln→$\\ln$
+
+DISPLAY MATH: Any standalone equation on its own line should use $$...$$
+INLINE MATH: Any math within a sentence should use $...$"""
+
+
+def call_gemini(contents, retries=3):
+    for model in MODELS:
+        for attempt in range(retries):
+            try:
+                return client_ai.models.generate_content(model=model, contents=contents)
+            except Exception as e:
+                err = str(e)
+                print(f"Model {model} attempt {attempt + 1} failed: {err}")
+                if "503" in err or "UNAVAILABLE" in err or "overloaded" in err.lower():
+                    wait = 2 ** attempt
+                    print(f"Retrying in {wait}s...")
+                    time.sleep(wait)
+                    continue
+                if "404" in err or "NOT_FOUND" in err:
+                    break
+                time.sleep(1)
+    raise HTTPException(
+        status_code=503,
+        detail="AI service temporarily unavailable. Please try again in a moment."
+    )
+
+
 def extract_problems_structured(raw_text: str) -> list[dict]:
-    prompt = f"""You are given academic content with LaTeX math expressions.
-Extract every distinct problem. For each problem, identify if it has sub-parts (a), (b), (c) etc.
+    prompt = f"""You are extracting problems from academic content. Your ONLY job is to identify and cleanly separate EACH individual problem.
 
-Return ONLY a JSON array in this exact format:
+CRITICAL RULES — READ CAREFULLY:
+1. Every distinct problem/question MUST be its own SEPARATE entry in the JSON array
+2. If you see "Problem 1", "Problem 2", "1.", "2.", "Question 1" etc — each one is a SEPARATE entry
+3. NEVER merge multiple problems into one entry — this is the most important rule
+4. Sub-parts like (a), (b), (c) belong in the "parts" array of their parent problem
+5. If there are 4 problems in the text, return exactly 4 entries. If there are 10, return exactly 10.
+6. Count the problems carefully before writing the JSON
+
+{LATEX_RULES}
+
+Return ONLY a valid JSON array, no markdown, no backticks, nothing else:
 [
   {{
     "problem_number": 1,
-    "main_text": "The main problem statement without sub-parts",
+    "main_text": "Full problem statement here WITHOUT sub-parts text",
     "parts": [
-      {{"label": "a", "text": "full text of part a with context"}},
-      {{"label": "b", "text": "full text of part b with context"}}
+      {{"label": "a", "text": "Full text of part a — include enough context to understand standalone"}},
+      {{"label": "b", "text": "Full text of part b — include enough context to understand standalone"}}
     ]
   }},
   {{
     "problem_number": 2,
-    "main_text": "Problem with no sub-parts — full text here",
+    "main_text": "This problem has no sub-parts — full text goes here",
     "parts": []
   }}
 ]
 
-RULES:
-- If a problem has sub-parts (a)(b)(c) etc, put them in the parts array
-- If a problem has no sub-parts, leave parts as empty array and put full text in main_text
-- Each part text must include enough context to be understood standalone
-- CRITICAL: Preserve ALL LaTeX — wrap math in $ delimiters
-- Convert Greek letters: Ω → $\\Omega$, Θ → $\\Theta$, Σ → $\\Sigma$, ∈ → $\\in$
-- Convert summations: ∑ → $\\sum_{{i=1}}^{{n}}$
-- Convert square roots: √n → $\\sqrt{{n}}$
-- Convert fractions to $\\frac{{a}}{{b}}$
-- Convert superscripts: n² → $n^2$
-- Return ONLY the JSON array, no commentary
+Here is the content to extract from:
 
-Content:
-{raw_text}"""
+{raw_text}
 
-    response = call_gemini(prompt)
-    text = response.text.strip()
-    text = re.sub(r'```json\n?', '', text)
-    text = re.sub(r'```\n?', '', text)
-    try:
-        problems = json.loads(text)
-        if isinstance(problems, list):
-            return problems
-    except json.JSONDecodeError:
-        pass
-    return [{"problem_number": 1, "main_text": raw_text, "parts": []}]
+FINAL REMINDER: Count every numbered problem or question. Each one is a SEPARATE array entry. Return ONLY the JSON array."""
+
+    for attempt in range(3):
+        try:
+            response = call_gemini(prompt)
+            text = response.text.strip()
+            text = re.sub(r'```json\s*', '', text)
+            text = re.sub(r'```\s*', '', text)
+            text = text.strip()
+
+            start = text.find('[')
+            end = text.rfind(']') + 1
+            if start == -1 or end == 0:
+                print(f"No JSON array found on attempt {attempt + 1}, retrying...")
+                time.sleep(2)
+                continue
+
+            json_text = text[start:end]
+            problems = json.loads(json_text)
+
+            if isinstance(problems, list) and len(problems) > 0:
+                valid = []
+                for i, p in enumerate(problems):
+                    if isinstance(p, dict):
+                        valid.append({
+                            "problem_number": p.get("problem_number", i + 1),
+                            "main_text": p.get("main_text", p.get("description", p.get("text", ""))),
+                            "parts": p.get("parts", [])
+                        })
+                if valid:
+                    print(f"Successfully extracted {len(valid)} problems")
+                    return valid
+
+        except json.JSONDecodeError as e:
+            print(f"JSON parse error on attempt {attempt + 1}: {e}")
+            time.sleep(2)
+        except Exception as e:
+            print(f"Extraction error on attempt {attempt + 1}: {e}")
+            time.sleep(2)
+
+    print("All extraction attempts failed, returning raw text as single problem")
+    return [{"problem_number": 1, "main_text": raw_text[:3000], "parts": []}]
 
 
 def extract_text_from_pdf(file_bytes: bytes) -> str:
     response = call_gemini([
         types.Part.from_bytes(data=file_bytes, mime_type="application/pdf"),
-        """Extract all the text from this document.
+        f"""Extract ALL text from this document exactly as it appears.
 
-CRITICAL MATH RULES:
-- Convert ALL mathematical expressions, equations, symbols to LaTeX
-- Wrap inline math in $ delimiters: $f(n) = O(g(n))$
-- Wrap block/display math in $$ delimiters: $$T(n) = 2T(n/2) + n$$
-- Convert Greek letters: Ω → $\\Omega$, Θ → $\\Theta$, Σ → $\\Sigma$, ∈ → $\\in$
-- Convert summations: ∑ → $\\sum_{i=1}^{n}$
-- Convert square roots: √n → $\\sqrt{n}$
-- Convert fractions: 1/2 → $\\frac{1}{2}$
-- Convert superscripts: n² → $n^2$, n³ → $n^3$
-- Convert subscripts: f_k → $f_k$
-- Keep all problem text, numbering, and sub-parts (a)(b)(c) intact
-- Return raw text only, no commentary"""
+CRITICAL STRUCTURE RULES:
+- Preserve ALL problem numbers exactly: "1.", "Problem 1", "Question 3" etc
+- Keep a blank line between each problem so they are clearly separated
+- Preserve sub-parts (a), (b), (c) exactly under their parent problem
+- Do NOT summarize, skip, or merge any content
+- Return raw extracted text only, no commentary
+
+{LATEX_RULES}"""
     ])
     return response.text.strip()
 
@@ -99,20 +201,16 @@ CRITICAL MATH RULES:
 def extract_text_from_image(file_bytes: bytes, mime_type: str) -> str:
     response = call_gemini([
         types.Part.from_bytes(data=file_bytes, mime_type=mime_type),
-        """Extract all the text from this image.
+        f"""Extract ALL text from this image exactly as it appears.
 
-CRITICAL MATH RULES:
-- Convert ALL mathematical expressions, equations, symbols to LaTeX
-- Wrap inline math in $ delimiters: $f(n) = O(g(n))$
-- Wrap block/display math in $$ delimiters: $$T(n) = 2T(n/2) + n$$
-- Convert Greek letters: Ω → $\\Omega$, Θ → $\\Theta$, Σ → $\\Sigma$, ∈ → $\\in$
-- Convert summations: ∑ → $\\sum_{i=1}^{n}$
-- Convert square roots: √n → $\\sqrt{n}$
-- Convert fractions: 1/2 → $\\frac{1}{2}$
-- Convert superscripts: n² → $n^2$, n³ → $n^3$
-- Convert subscripts: f_k → $f_k$
-- Keep all problem text, numbering, and sub-parts (a)(b)(c) intact
-- Return raw text only, no commentary"""
+CRITICAL STRUCTURE RULES:
+- Preserve ALL problem numbers exactly: "1.", "Problem 1", "Question 3" etc
+- Keep a blank line between each problem
+- Preserve sub-parts (a), (b), (c) exactly under their parent problem
+- Do NOT summarize, skip, or merge any content
+- Return raw extracted text only, no commentary
+
+{LATEX_RULES}"""
     ])
     return response.text.strip()
 
@@ -389,7 +487,6 @@ async def get_problem_ai_guidance(
 
     problem_text = problem.data[0]["problem_text"]
 
-    # Build full history with stage labels — safely handle missing keys
     history_text = ""
     questions_asked_in_stage = 0
     for msg in body.conversation_history:
@@ -436,7 +533,6 @@ async def get_problem_ai_guidance(
     else:
         parsed = {"message": "Could you explain your reasoning further?", "understood": False}
 
-    # Enforce 5 questions on backend
     questions_after = questions_asked_in_stage + 1
     if questions_after < STAGE_DEFINITIONS.get(body.stage, {}).get("questions", 5):
         parsed["understood"] = False

@@ -1,44 +1,133 @@
 from fastapi import APIRouter, Security, UploadFile, File, Form, HTTPException
 from app.dependencies import get_current_user
 from app.database import client
-from app.schemas import CreateWorkspaceRequest, WorkspaceAIGuidanceRequest
+from app.schemas import WorkspaceAIGuidanceRequest
 from google import genai
 from google.genai import types
 import os
 import json
 import re
+import time
 
 router = APIRouter()
 
 client_ai = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
+MODELS = [
+    "models/gemini-2.5-flash",
+    "models/gemini-2.0-flash",
+    "models/gemini-2.0-flash-lite",
+]
 
-def call_gemini(contents):
-    for model in [
-        "gemini-2.5-flash",
-        "gemini-2.0-flash",
-        "gemini-1.5-flash",
-        "gemini-1.5-pro",
-    ]:
-        try:
-            return client_ai.models.generate_content(model=model, contents=contents)
-        except Exception as e:
-            print(f"Model {model} failed: {e}")
-            continue
-    raise HTTPException(status_code=503, detail="AI service temporarily unavailable. Please try again.")
+LATEX_RULES = """LATEX CONVERSION RULES — apply every single one:
+
+GREEK LETTERS: α→$\\alpha$, β→$\\beta$, γ→$\\gamma$, δ→$\\delta$, ε→$\\epsilon$, ζ→$\\zeta$, η→$\\eta$, θ→$\\theta$, λ→$\\lambda$, μ→$\\mu$, ν→$\\nu$, π→$\\pi$, ρ→$\\rho$, σ→$\\sigma$, τ→$\\tau$, φ→$\\phi$, χ→$\\chi$, ψ→$\\psi$, ω→$\\omega$, Γ→$\\Gamma$, Δ→$\\Delta$, Θ→$\\Theta$, Λ→$\\Lambda$, Π→$\\Pi$, Σ→$\\Sigma$, Φ→$\\Phi$, Ψ→$\\Psi$, Ω→$\\Omega$
+
+SUPERSCRIPTS AND SUBSCRIPTS: n²→$n^2$, n³→$n^3$, x^n→$x^n$, a_i→$a_i$, x_{ij}→$x_{ij}$, A^T→$A^T$, A^{-1}→$A^{-1}$
+
+FRACTIONS: a/b in math context→$\\frac{a}{b}$, 1/2→$\\frac{1}{2}$, n/2→$\\frac{n}{2}$
+
+ROOTS: √n→$\\sqrt{n}$, √(a+b)→$\\sqrt{a+b}$, ∛n→$\\sqrt[3]{n}$
+
+SUMMATION AND PRODUCTS: ∑→$\\sum_{i=1}^{n}$, ∏→$\\prod_{i=1}^{n}$, ∫→$\\int$, ∫_a^b→$\\int_a^b$
+
+SET NOTATION: ∈→$\\in$, ∉→$\\notin$, ⊆→$\\subseteq$, ⊂→$\\subset$, ⊇→$\\supseteq$, ∪→$\\cup$, ∩→$\\cap$, ∅→$\\emptyset$, ℝ→$\\mathbb{R}$, ℤ→$\\mathbb{Z}$, ℕ→$\\mathbb{N}$, ℚ→$\\mathbb{Q}$, ℂ→$\\mathbb{C}$
+
+LOGIC: ∀→$\\forall$, ∃→$\\exists$, ¬→$\\neg$, ∧→$\\land$, ∨→$\\lor$, →→$\\rightarrow$, ↔→$\\leftrightarrow$, ⟹→$\\Rightarrow$, ⟺→$\\Leftrightarrow$
+
+RELATIONS: ≤→$\\leq$, ≥→$\\geq$, ≠→$\\neq$, ≈→$\\approx$, ≡→$\\equiv$, ∝→$\\propto$, ≪→$\\ll$, ≫→$\\gg$
+
+ARROWS: →→$\\to$, ←→$\\leftarrow$, ↑→$\\uparrow$, ↓→$\\downarrow$, ↦→$\\mapsto$
+
+MATRICES AND VECTORS:
+- Column vector: $\\begin{pmatrix} a \\\\ b \\\\ c \\end{pmatrix}$
+- Row vector: $\\begin{pmatrix} a & b & c \\end{pmatrix}$
+- Matrix: $\\begin{pmatrix} a & b \\\\ c & d \\end{pmatrix}$ or $\\begin{bmatrix} a & b \\\\ c & d \\end{bmatrix}$
+- Augmented matrix: $\\left[\\begin{array}{cc|c} a & b & c \\\\ d & e & f \\end{array}\\right]$
+- Determinant: $\\det(A)$ or $|A|$
+- Transpose: $A^T$
+- Inverse: $A^{-1}$
+- Norm: $\\|v\\|$ or $\\|v\\|_2$
+- Dot product: $u \\cdot v$
+- Cross product: $u \\times v$
+- Bold vectors: $\\mathbf{v}$ or $\\vec{v}$
+
+LINEAR ALGEBRA:
+- Span: $\\text{span}\\{v_1, v_2\\}$
+- Rank: $\\text{rank}(A)$
+- Null space: $\\text{null}(A)$ or $\\ker(A)$
+- Column space: $\\text{col}(A)$
+- Row space: $\\text{row}(A)$
+- Eigenvalue equation: $Av = \\lambda v$
+- Characteristic polynomial: $\\det(A - \\lambda I)$
+- Inner product: $\\langle u, v \\rangle$
+- Orthogonal: $u \\perp v$
+- Linear transformation: $T: \\mathbb{R}^n \\to \\mathbb{R}^m$
+- Projection: $\\text{proj}_u v$
+- Gram-Schmidt: $e_k = v_k - \\sum_{j<k} \\text{proj}_{e_j} v_k$
+
+CALCULUS:
+- Derivative: $\\frac{d}{dx}$, $f'(x)$, $\\frac{df}{dx}$
+- Partial derivative: $\\frac{\\partial f}{\\partial x}$
+- Gradient: $\\nabla f$
+- Laplacian: $\\nabla^2 f$
+- Limit: $\\lim_{x \\to a}$
+- Infinity: ∞→$\\infty$
+
+COMPLEXITY AND FUNCTIONS:
+- Big-O: O(n)→$O(n)$, Ω(n)→$\\Omega(n)$, Θ(n)→$\\Theta(n)$
+- Floor/ceiling: ⌊x⌋→$\\lfloor x \\rfloor$, ⌈x⌉→$\\lceil x \\rceil$
+- Absolute value: |x|→$|x|$
+- Log: log_b(n)→$\\log_b n$, ln→$\\ln$
+- Combinations: C(n,k)→$\\binom{n}{k}$
+
+DISPLAY MATH: Standalone equations on their own line use $$...$$
+INLINE MATH: Math within a sentence uses $...$"""
+
+
+def call_gemini(contents, retries=3):
+    for model in MODELS:
+        for attempt in range(retries):
+            try:
+                return client_ai.models.generate_content(model=model, contents=contents)
+            except Exception as e:
+                err = str(e)
+                print(f"Model {model} attempt {attempt + 1} failed: {err}")
+                if "503" in err or "UNAVAILABLE" in err or "overloaded" in err.lower():
+                    wait = 2 ** attempt
+                    print(f"Retrying in {wait}s...")
+                    time.sleep(wait)
+                    continue
+                if "404" in err or "NOT_FOUND" in err:
+                    break
+                time.sleep(1)
+    raise HTTPException(
+        status_code=503,
+        detail="AI service temporarily unavailable. Please try again in a moment."
+    )
+
 
 def extract_problems_structured(raw_text: str) -> list[dict]:
-    prompt = f"""You are given academic content with LaTeX math expressions.
-Extract every distinct problem. For each problem, identify if it has sub-parts (a), (b), (c) etc.
+    prompt = f"""You are extracting problems from academic content. Your ONLY job is to identify and cleanly separate EACH individual problem.
 
-Return ONLY a JSON array in this exact format:
+CRITICAL RULES:
+1. Every distinct problem/question MUST be its own SEPARATE entry in the JSON array
+2. If you see "Problem 1", "Problem 2", "1.", "2.", "Question 1" etc — each one is a SEPARATE entry
+3. NEVER merge multiple problems into one entry
+4. Sub-parts like (a), (b), (c) belong in the "parts" array of their parent problem
+5. If there are 4 problems in the text, return exactly 4 entries
+6. Count the problems carefully before writing the JSON
+
+{LATEX_RULES}
+
+Return ONLY a valid JSON array, no markdown, no backticks:
 [
   {{
     "problem_number": 1,
-    "main_text": "The main problem statement without sub-parts",
+    "main_text": "Full problem statement WITHOUT sub-parts",
     "parts": [
-      {{"label": "a", "text": "full text of part a with context"}},
-      {{"label": "b", "text": "full text of part b with context"}}
+      {{"label": "a", "text": "Full text of part a with enough context to understand standalone"}},
+      {{"label": "b", "text": "Full text of part b with enough context to understand standalone"}}
     ]
   }},
   {{
@@ -48,51 +137,65 @@ Return ONLY a JSON array in this exact format:
   }}
 ]
 
-RULES:
-- If a problem has sub-parts (a)(b)(c) etc, put them in the parts array
-- If a problem has no sub-parts, leave parts as empty array and put full text in main_text
-- Each part text must include enough context to be understood standalone
-- CRITICAL: Preserve ALL LaTeX — wrap math in $ delimiters
-- Convert Greek letters: Ω → $\\Omega$, Θ → $\\Theta$, Σ → $\\Sigma$, ∈ → $\\in$
-- Convert summations: ∑ → $\\sum_{{i=1}}^{{n}}$
-- Convert square roots: √n → $\\sqrt{{n}}$
-- Convert fractions to $\\frac{{a}}{{b}}$
-- Convert superscripts: n² → $n^2$
-- Return ONLY the JSON array, no commentary
+Content to extract:
 
-Content:
-{raw_text}"""
+{raw_text}
 
-    response = call_gemini(prompt)
-    text = response.text.strip()
-    text = re.sub(r'```json\n?', '', text)
-    text = re.sub(r'```\n?', '', text)
-    try:
-        problems = json.loads(text)
-        if isinstance(problems, list):
-            return problems
-    except json.JSONDecodeError:
-        pass
-    return [{"problem_number": 1, "main_text": raw_text, "parts": []}]
+REMINDER: Count every numbered problem. Each is a SEPARATE entry. Return ONLY the JSON array."""
+
+    for attempt in range(3):
+        try:
+            response = call_gemini(prompt)
+            text = response.text.strip()
+            text = re.sub(r'```json\s*', '', text)
+            text = re.sub(r'```\s*', '', text)
+            text = text.strip()
+
+            start = text.find('[')
+            end = text.rfind(']') + 1
+            if start == -1 or end == 0:
+                print(f"No JSON array found on attempt {attempt + 1}, retrying...")
+                time.sleep(2)
+                continue
+
+            problems = json.loads(text[start:end])
+
+            if isinstance(problems, list) and len(problems) > 0:
+                valid = []
+                for i, p in enumerate(problems):
+                    if isinstance(p, dict):
+                        valid.append({
+                            "problem_number": p.get("problem_number", i + 1),
+                            "main_text": p.get("main_text", p.get("description", p.get("text", ""))),
+                            "parts": p.get("parts", [])
+                        })
+                if valid:
+                    print(f"Successfully extracted {len(valid)} problems")
+                    return valid
+
+        except json.JSONDecodeError as e:
+            print(f"JSON parse error on attempt {attempt + 1}: {e}")
+            time.sleep(2)
+        except Exception as e:
+            print(f"Extraction error on attempt {attempt + 1}: {e}")
+            time.sleep(2)
+
+    return [{"problem_number": 1, "main_text": raw_text[:3000], "parts": []}]
 
 
 def extract_text_from_pdf(file_bytes: bytes) -> str:
     response = call_gemini([
         types.Part.from_bytes(data=file_bytes, mime_type="application/pdf"),
-        """Extract all the text from this document.
+        f"""Extract ALL text from this document exactly as it appears.
 
-CRITICAL MATH RULES:
-- Convert ALL mathematical expressions, equations, symbols to LaTeX
-- Wrap inline math in $ delimiters: $f(n) = O(g(n))$
-- Wrap block/display math in $$ delimiters: $$T(n) = 2T(n/2) + n$$
-- Convert Greek letters: Ω → $\\Omega$, Θ → $\\Theta$, Σ → $\\Sigma$, ∈ → $\\in$
-- Convert summations: ∑ → $\\sum_{i=1}^{n}$
-- Convert square roots: √n → $\\sqrt{n}$
-- Convert fractions: 1/2 → $\\frac{1}{2}$
-- Convert superscripts: n² → $n^2$, n³ → $n^3$
-- Convert subscripts: f_k → $f_k$
-- Keep all problem text, numbering, and sub-parts (a)(b)(c) intact
-- Return raw text only, no commentary"""
+CRITICAL STRUCTURE RULES:
+- Preserve ALL problem numbers exactly as they appear
+- Keep a blank line between each problem
+- Preserve sub-parts (a), (b), (c) exactly under their parent problem
+- Do NOT summarize, skip, or merge any content
+- Return raw extracted text only, no commentary
+
+{LATEX_RULES}"""
     ])
     return response.text.strip()
 
@@ -100,20 +203,16 @@ CRITICAL MATH RULES:
 def extract_text_from_image(file_bytes: bytes, mime_type: str) -> str:
     response = call_gemini([
         types.Part.from_bytes(data=file_bytes, mime_type=mime_type),
-        """Extract all the text from this image.
+        f"""Extract ALL text from this image exactly as it appears.
 
-CRITICAL MATH RULES:
-- Convert ALL mathematical expressions, equations, symbols to LaTeX
-- Wrap inline math in $ delimiters: $f(n) = O(g(n))$
-- Wrap block/display math in $$ delimiters: $$T(n) = 2T(n/2) + n$$
-- Convert Greek letters: Ω → $\\Omega$, Θ → $\\Theta$, Σ → $\\Sigma$, ∈ → $\\in$
-- Convert summations: ∑ → $\\sum_{i=1}^{n}$
-- Convert square roots: √n → $\\sqrt{n}$
-- Convert fractions: 1/2 → $\\frac{1}{2}$
-- Convert superscripts: n² → $n^2$, n³ → $n^3$
-- Convert subscripts: f_k → $f_k$
-- Keep all problem text, numbering, and sub-parts (a)(b)(c) intact
-- Return raw text only, no commentary"""
+CRITICAL STRUCTURE RULES:
+- Preserve ALL problem numbers exactly as they appear
+- Keep a blank line between each problem
+- Preserve sub-parts (a), (b), (c) exactly under their parent problem
+- Do NOT summarize, skip, or merge any content
+- Return raw extracted text only, no commentary
+
+{LATEX_RULES}"""
     ])
     return response.text.strip()
 
@@ -312,70 +411,6 @@ async def create_workspace(
     source_type: str = Form(...),
     raw_text: str = Form(None),
     file: UploadFile = File(None),
-    current_user=Security(get_current_user)
-):
-    if mode not in ("deep_focus", "guided", "open"):
-        raise HTTPException(status_code=400, detail="Invalid mode")
-    if source_type not in ("pdf", "image", "text"):
-        raise HTTPException(status_code=400, detail="Invalid source_type")
-
-    extracted_text = ""
-    if source_type == "text":
-        if not raw_text:
-            raise HTTPException(status_code=400, detail="raw_text required")
-        extracted_text = raw_text
-    elif source_type == "pdf":
-        if not file:
-            raise HTTPException(status_code=400, detail="File required")
-        extracted_text = extract_text_from_pdf(await file.read())
-    elif source_type == "image":
-        if not file:
-            raise HTTPException(status_code=400, detail="File required")
-        extracted_text = extract_text_from_image(await file.read(), file.content_type or "image/jpeg")
-
-    workspace = client.table("Personal_Workspaces").insert({
-        "user_id": current_user["id"],
-        "title": title,
-        "mode": mode,
-    }).execute()
-
-    workspace_id = workspace.data[0]["id"]
-    problems = extract_problems_structured(extracted_text)
-
-    for prob in problems:
-        problem_row = client.table("Workspace_Problems").insert({
-            "workspace_id": workspace_id,
-            "problem_number": prob["problem_number"],
-            "problem_text": prob["main_text"],
-        }).execute()
-
-        problem_id = problem_row.data[0]["id"]
-
-        if prob.get("parts"):
-            part_rows = [
-                {
-                    "problem_id": problem_id,
-                    "part_label": p["label"],
-                    "part_text": p["text"],
-                    "part_number": i + 1,
-                }
-                for i, p in enumerate(prob["parts"])
-            ]
-            client.table("Workspace_Problem_Parts").insert(part_rows).execute()
-
-    return {
-        "workspace": workspace.data[0],
-        "problem_count": len(problems)
-    }
-
-
-@router.post('/workspaces')
-async def create_workspace(
-    title: str = Form(...),
-    mode: str = Form("guided"),
-    source_type: str = Form(...),
-    raw_text: str = Form(None),
-    file: UploadFile = File(None),
     subject: str = Form(None),
     term_type: str = Form(None),
     term_name: str = Form(None),
@@ -441,6 +476,16 @@ async def create_workspace(
     }
 
 
+@router.get('/workspaces')
+async def get_workspaces(current_user=Security(get_current_user)):
+    workspaces = client.table("Personal_Workspaces") \
+        .select("*") \
+        .eq("user_id", current_user["id"]) \
+        .order("created_at", desc=True) \
+        .execute()
+    return workspaces.data
+
+
 @router.get('/workspaces/{workspace_id}')
 async def get_workspace(workspace_id: str, current_user=Security(get_current_user)):
     workspace = client.table("Personal_Workspaces") \
@@ -472,7 +517,6 @@ async def workspace_ai_guidance(
     body: WorkspaceAIGuidanceRequest,
     current_user=Security(get_current_user)
 ):
-    # Build full history with stage labels — safely handle missing keys
     history_text = ""
     questions_asked_in_stage = 0
     for msg in body.conversation_history:
@@ -514,7 +558,6 @@ async def workspace_ai_guidance(
     else:
         parsed = {"message": "Keep working through this step.", "understood": False}
 
-    # Enforce 5 questions on backend
     questions_after = questions_asked_in_stage + 1
     if questions_after < STAGE_DEFINITIONS.get(body.stage, {}).get("questions", 5):
         parsed["understood"] = False
@@ -581,13 +624,14 @@ async def get_workspace_problem(problem_id: str, current_user=Security(get_curre
         "siblings": siblings.data,
         "sibling_traces": sibling_traces
     }
+
+
 @router.delete('/workspaces/{workspace_id}')
 async def delete_workspace(workspace_id: str, current_user=Security(get_current_user)):
     workspace = client.table("Personal_Workspaces").select("id").eq("id", workspace_id).eq("user_id", current_user["id"]).execute()
     if not workspace.data:
         raise HTTPException(status_code=404, detail="Workspace not found")
 
-    # Delete all traces, parts, problems, then workspace
     problems = client.table("Workspace_Problems").select("id").eq("workspace_id", workspace_id).execute()
     for p in problems.data:
         client.table("Workspace_Traces").delete().eq("problem_id", p["id"]).execute()
@@ -608,21 +652,9 @@ async def generate_problem_summary(
     if not problem.data:
         raise HTTPException(status_code=404, detail="Problem not found")
 
-    # Get all traces for this problem
-    traces = client.table("Workspace_Traces").select("*").eq("problem_id", problem_id).eq("user_id", current_user["id"]).order("created_at").execute()
-
-    # Group by stage
-    stages = ["understand", "concept", "plan", "attempt", "critique", "reflection"]
-    stage_traces: dict = {s: [] for s in stages}
-    for t in traces.data:
-        s = t.get("stage", "")
-        if s in stage_traces:
-            stage_traces[s].append(t.get("content", ""))
-
     problem_text = problem.data[0]["problem_text"]
     conversation_history = body.get("conversation_history", [])
 
-    # Build history text
     history_text = ""
     for msg in conversation_history:
         role = msg.get("role", "")
@@ -645,21 +677,21 @@ Generate a structured JSON summary of this student's reasoning journey. Be speci
 Return ONLY valid JSON in this exact format:
 {{
   "stage_insights": {{
-    "understand": "2-3 sentence insight about how well they understood the problem. What did they grasp? What did they miss?",
-    "concept": "2-3 sentence insight about their conceptual reasoning. Did they identify the right approach? How strong was their justification?",
-    "plan": "2-3 sentence insight about their planning. Was it concrete and logical? What was strong or weak?",
-    "attempt": "2-3 sentence insight about their execution. Did they follow their plan? Where did they struggle or excel?",
-    "critique": "2-3 sentence insight about their critical thinking. How deeply did they examine their own work?",
-    "reflection": "2-3 sentence insight about their reflection. What genuine learning did they demonstrate?"
+    "understand": "2-3 sentence insight about how well they understood the problem.",
+    "concept": "2-3 sentence insight about their conceptual reasoning.",
+    "plan": "2-3 sentence insight about their planning.",
+    "attempt": "2-3 sentence insight about their execution.",
+    "critique": "2-3 sentence insight about their critical thinking.",
+    "reflection": "2-3 sentence insight about their reflection."
   }},
-  "key_insight": "The single most important thing this student demonstrated or learned in this problem. Be specific and reference their actual reasoning.",
+  "key_insight": "The single most important thing this student demonstrated or learned. Be specific.",
   "strongest_stage": "understand|concept|plan|attempt|critique|reflection",
   "weakest_stage": "understand|concept|plan|attempt|critique|reflection",
-  "growth_note": "One specific, actionable thing this student should focus on to improve their reasoning on similar problems.",
+  "growth_note": "One specific actionable thing this student should focus on to improve.",
   "overall_score": 7
 }}
 
-overall_score is 1-10 based on depth, genuine engagement, and quality of reasoning across all stages."""
+overall_score is 1-10 based on depth, genuine engagement, and quality of reasoning."""
 
     response = call_gemini(prompt)
     text = response.text.strip()
@@ -671,11 +703,24 @@ overall_score is 1-10 based on depth, genuine engagement, and quality of reasoni
         try:
             summary = json.loads(match.group())
         except json.JSONDecodeError:
-            summary = {"key_insight": "Unable to generate summary.", "stage_insights": {}, "overall_score": 0, "growth_note": "", "strongest_stage": "", "weakest_stage": ""}
+            summary = {
+                "key_insight": "Unable to generate summary.",
+                "stage_insights": {},
+                "overall_score": 0,
+                "growth_note": "",
+                "strongest_stage": "",
+                "weakest_stage": ""
+            }
     else:
-        summary = {"key_insight": "Unable to generate summary.", "stage_insights": {}, "overall_score": 0, "growth_note": "", "strongest_stage": "", "weakest_stage": ""}
+        summary = {
+            "key_insight": "Unable to generate summary.",
+            "stage_insights": {},
+            "overall_score": 0,
+            "growth_note": "",
+            "strongest_stage": "",
+            "weakest_stage": ""
+        }
 
-    # Save to DB
     client.table("Workspace_Problems").update({
         "ai_summary": json.dumps(summary),
         "summary_generated_at": "now()",
