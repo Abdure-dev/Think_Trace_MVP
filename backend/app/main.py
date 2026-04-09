@@ -43,3 +43,10 @@ async def first_api():
 async def get_uni():
     uni = client.table("Universities").select("*").execute()
     return uni.data
+@app.get("/debug/models")
+async def list_models():
+    from google import genai
+    import os
+    client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+    models = list(client.models.list())
+    return {"models": [m.name for m in models]}
