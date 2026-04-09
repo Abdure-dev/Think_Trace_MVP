@@ -3,14 +3,609 @@
 import Link from "next/link";
 import { useState, useEffect } from "react";
 
+const STAGES = [
+  "Understand",
+  "Concept",
+  "Plan",
+  "Attempt",
+  "Critique",
+  "Reflect",
+];
+const TIMERS = ["2:47", "3:51", "4:22", "7:14", "3:38", "2:55"];
+const OBJECTIVES = [
+  "Restate the problem in your own words. Identify what is given, what you need to find, and any constraints. Do NOT solve yet.",
+  "Identify the core concepts or theorems that apply. Explain WHY each one is relevant to this specific problem.",
+  "Write a numbered step-by-step plan before solving. Be specific — each step must be actionable.",
+  "Execute your plan step by step. Show ALL your work. Explain every step as you go.",
+  "Examine your solution critically. What could go wrong? What edge cases exist?",
+  "What did you learn? What is the key insight? How does this connect to what you already know?",
+];
+const CONVERSATIONS = [
+  [
+    {
+      r: "student",
+      t: "This problem asks me to find the time complexity of T(n) = 2T(n/2) + n. The input is split into 2 halves each of size n/2, and we do n work at each level.",
+    },
+    {
+      r: "ai",
+      t: 'Good restatement. What does the "2T(n/2)" part specifically tell you about how the algorithm divides the problem?',
+    },
+    {
+      r: "student",
+      t: "It means we always split into exactly 2 sub-problems, each half the size of the original.",
+    },
+  ],
+  [
+    {
+      r: "student",
+      t: "This matches the Master Theorem form T(n) = aT(n/b) + f(n) with a=2, b=2, f(n)=n.",
+    },
+    {
+      r: "ai",
+      t: "Which case of the Master Theorem applies here — and what is your reasoning for that choice?",
+    },
+    {
+      r: "student",
+      t: "log_b(a) = log_2(2) = 1. f(n) = n = Θ(n¹), so f(n) = Θ(n^log_b(a)). That's Case 2.",
+    },
+  ],
+  [
+    {
+      r: "student",
+      t: "1. Identify a, b, f(n)\n2. Compute log_b(a)\n3. Compare f(n) to n^log_b(a)\n4. Apply the matching case\n5. State the result in Θ notation",
+    },
+    {
+      r: "ai",
+      t: "Clear plan. Before you execute — how will you verify which case applies without just pattern matching?",
+    },
+  ],
+  [
+    {
+      r: "student",
+      t: "a=2, b=2, f(n)=n. log_2(2)=1. f(n)=Θ(n^1). Case 2 applies → T(n) = Θ(n log n).",
+    },
+    {
+      r: "ai",
+      t: "Correct result. Now explain in your own words WHY Case 2 produces that extra log factor.",
+    },
+  ],
+  [
+    {
+      r: "student",
+      t: "My solution assumes n is a power of 2. It also assumes the Master Theorem conditions hold: a≥1, b>1, f(n) positive.",
+    },
+    {
+      r: "ai",
+      t: "Good critical thinking. When would the Master Theorem completely fail to apply to a recurrence of this form?",
+    },
+  ],
+  [
+    {
+      r: "student",
+      t: "I learned that when work per level equals the branching factor, we get Θ(n log n). The log factor comes from the recursion depth, not the branching.",
+    },
+    {
+      r: "ai",
+      t: "That's precise. How would you quickly recognize this pattern in a new problem you've never seen before?",
+    },
+  ],
+];
+
+const STUDENTS = [
+  {
+    n: "Amir Hassan",
+    i: "AH",
+    c: "#800000",
+    s: 5,
+    t: "The recurrence splits into 2 sub-problems each of size n/2. The n term at each level is what gives us the log factor...",
+  },
+  {
+    n: "Sara Chen",
+    i: "SC",
+    c: "#1e2a4a",
+    s: 3,
+    t: "I need Master Theorem. a=2, b=2, log_b(a)=1. Comparing f(n)=n to n^1 shows this is Case 2...",
+  },
+  {
+    n: "Marcus Webb",
+    i: "MW",
+    c: "#2d6a4f",
+    s: 2,
+    t: "This is divide and conquer. The algorithm splits the input in half at every step of the recursion...",
+  },
+  {
+    n: "Lena Okafor",
+    i: "LO",
+    c: "#854f0b",
+    s: 1,
+    t: "T(n) = 2T(n/2) + n means we divide into 2 halves and do n additional work at each level...",
+  },
+];
+
 export default function LandingPage() {
   const [scrolled, setScrolled] = useState(false);
+  const [demoView, setDemoView] = useState<"student" | "instructor">("student");
+  const [demoStage, setDemoStage] = useState(0);
+  const [visibleBubbles, setVisibleBubbles] = useState(0);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 20);
     window.addEventListener("scroll", onScroll);
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setDemoStage((s) => (s + 1) % STAGES.length);
+      setVisibleBubbles(0);
+    }, 4500);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    setVisibleBubbles(0);
+    const convos = CONVERSATIONS[demoStage];
+    convos.forEach((_, i) => {
+      setTimeout(
+        () => setVisibleBubbles((v) => Math.max(v, i + 1)),
+        i * 900 + 400
+      );
+    });
+  }, [demoStage]);
+
+  function StudentDemo() {
+    const convos = CONVERSATIONS[demoStage];
+    return (
+      <div style={{ display: "flex", minHeight: "340px" }}>
+        <div
+          style={{
+            width: "140px",
+            background: "#1e2a4a",
+            padding: "16px 12px",
+            flexShrink: 0,
+          }}
+        >
+          <div
+            style={{
+              fontSize: "10px",
+              color: "rgba(147,197,253,0.6)",
+              textTransform: "uppercase",
+              letterSpacing: "0.08em",
+              fontWeight: 600,
+              marginBottom: "10px",
+              fontFamily: "system-ui",
+            }}
+          >
+            Stages
+          </div>
+          {STAGES.map((s, i) => (
+            <div
+              key={s}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                padding: "7px 8px",
+                borderRadius: "8px",
+                marginBottom: "3px",
+                background:
+                  i === demoStage ? "rgba(255,255,255,0.18)" : "transparent",
+                transition: "all 0.4s",
+              }}
+            >
+              <div
+                style={{
+                  width: "18px",
+                  height: "18px",
+                  borderRadius: "50%",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: "10px",
+                  fontWeight: 700,
+                  flexShrink: 0,
+                  fontFamily: "system-ui",
+                  background:
+                    i < demoStage
+                      ? "#4ade80"
+                      : i === demoStage
+                      ? "white"
+                      : "rgba(255,255,255,0.2)",
+                  color:
+                    i < demoStage
+                      ? "white"
+                      : i === demoStage
+                      ? "#1e2a4a"
+                      : "rgba(255,255,255,0.5)",
+                  transition: "all 0.4s",
+                }}
+              >
+                {i < demoStage ? "✓" : i + 1}
+              </div>
+              <span
+                style={{
+                  fontSize: "11px",
+                  fontFamily: "system-ui",
+                  transition: "color 0.4s",
+                  color:
+                    i < demoStage
+                      ? "#4ade80"
+                      : i === demoStage
+                      ? "white"
+                      : "rgba(255,255,255,0.45)",
+                  fontWeight: i === demoStage ? 600 : 400,
+                }}
+              >
+                {s}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        <div
+          style={{
+            flex: 1,
+            padding: "16px",
+            display: "flex",
+            flexDirection: "column",
+            gap: "10px",
+          }}
+        >
+          <div
+            style={{
+              background: "#faf9f7",
+              borderRadius: "8px",
+              padding: "10px 12px",
+              border: "1px solid rgba(26,18,8,0.06)",
+            }}
+          >
+            <div
+              style={{
+                fontSize: "10px",
+                fontWeight: 700,
+                color: "#800000",
+                textTransform: "uppercase",
+                letterSpacing: "0.08em",
+                marginBottom: "4px",
+                fontFamily: "system-ui",
+              }}
+            >
+              Problem 1(a)
+            </div>
+            <div
+              style={{
+                fontSize: "12px",
+                color: "#1a1208",
+                lineHeight: 1.5,
+                fontFamily: "system-ui",
+              }}
+            >
+              Solve T(n) = 2T(n/2) + n using the Master Theorem. Express in Θ
+              notation.
+            </div>
+          </div>
+
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+            }}
+          >
+            <span
+              style={{
+                fontSize: "14px",
+                fontWeight: 700,
+                color: "#1a1208",
+                fontFamily: "system-ui",
+              }}
+            >
+              {STAGES[demoStage]}
+            </span>
+            <span
+              style={{
+                fontSize: "11px",
+                fontWeight: 600,
+                padding: "3px 8px",
+                borderRadius: "20px",
+                background: "#fff3e0",
+                color: "#e65100",
+                fontFamily: "system-ui",
+              }}
+            >
+              {TIMERS[demoStage]} remaining
+            </span>
+          </div>
+
+          <div
+            style={{
+              background: "#eff6ff",
+              border: "1px solid #bfdbfe",
+              borderRadius: "8px",
+              padding: "8px 10px",
+            }}
+          >
+            <div
+              style={{
+                fontSize: "9px",
+                fontWeight: 700,
+                color: "#1d4ed8",
+                textTransform: "uppercase",
+                letterSpacing: "0.08em",
+                marginBottom: "3px",
+                fontFamily: "system-ui",
+              }}
+            >
+              Objective
+            </div>
+            <div
+              style={{
+                fontSize: "11px",
+                color: "#1e40af",
+                lineHeight: 1.4,
+                fontFamily: "system-ui",
+              }}
+            >
+              {OBJECTIVES[demoStage]}
+            </div>
+          </div>
+
+          <div
+            style={{
+              height: "3px",
+              background: "#f0ece6",
+              borderRadius: "2px",
+            }}
+          >
+            <div
+              style={{
+                height: "100%",
+                background: "#800000",
+                borderRadius: "2px",
+                width: `${(demoStage / STAGES.length) * 100}%`,
+                transition: "width 0.8s ease",
+              }}
+            />
+          </div>
+
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: "7px",
+              flex: 1,
+            }}
+          >
+            {convos.slice(0, visibleBubbles).map((msg, i) => (
+              <div
+                key={i}
+                style={{
+                  padding: "8px 10px",
+                  borderRadius: "8px",
+                  fontSize: "11px",
+                  lineHeight: 1.5,
+                  fontFamily: "system-ui",
+                  marginLeft: msg.r === "student" ? "20px" : "0",
+                  marginRight: msg.r === "ai" ? "20px" : "0",
+                  background:
+                    msg.r === "student" ? "#f3f4f6" : "rgba(128,0,0,0.04)",
+                  border:
+                    msg.r === "student"
+                      ? "1px solid #e5e7eb"
+                      : "1px solid rgba(128,0,0,0.1)",
+                  color: msg.r === "student" ? "#374151" : "#5a4a3a",
+                  animation: "fadeUp 0.4s ease",
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: "9px",
+                    fontWeight: 700,
+                    marginBottom: "3px",
+                    color: msg.r === "student" ? "#9ca3af" : "#800000",
+                  }}
+                >
+                  {msg.r === "student" ? "You" : "ThinkTrace AI"}
+                </div>
+                {msg.t}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  function InstructorDemo() {
+    return (
+      <div style={{ padding: "16px" }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: "14px",
+          }}
+        >
+          <div>
+            <div
+              style={{
+                fontSize: "14px",
+                fontWeight: 700,
+                color: "#1a1208",
+                fontFamily: "system-ui",
+              }}
+            >
+              CSCI 301 — Problem Set 3
+            </div>
+            <div
+              style={{
+                fontSize: "11px",
+                color: "#8a7a6a",
+                fontFamily: "system-ui",
+              }}
+            >
+              Real-time student reasoning traces
+            </div>
+          </div>
+          <div
+            style={{
+              background: "#800000",
+              color: "white",
+              fontSize: "11px",
+              fontWeight: 600,
+              padding: "5px 12px",
+              borderRadius: "20px",
+              fontFamily: "system-ui",
+            }}
+          >
+            Live
+          </div>
+        </div>
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(3,1fr)",
+            gap: "8px",
+            marginBottom: "14px",
+          }}
+        >
+          {[
+            { n: "24", l: "Students active" },
+            { n: "18", l: "On track" },
+            { n: "6", l: "Need attention", c: "#800000" },
+          ].map((s) => (
+            <div
+              key={s.l}
+              style={{
+                background: "#faf9f7",
+                borderRadius: "8px",
+                padding: "10px",
+                textAlign: "center",
+              }}
+            >
+              <div
+                style={{
+                  fontSize: "20px",
+                  fontWeight: 700,
+                  color: (s as any).c || "#1a1208",
+                  fontFamily: "system-ui",
+                }}
+              >
+                {s.n}
+              </div>
+              <div
+                style={{
+                  fontSize: "10px",
+                  color: "#8a7a6a",
+                  marginTop: "2px",
+                  fontFamily: "system-ui",
+                }}
+              >
+                {s.l}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {STUDENTS.map((s) => (
+          <div
+            key={s.n}
+            style={{
+              display: "flex",
+              alignItems: "flex-start",
+              gap: "10px",
+              padding: "8px 10px",
+              borderRadius: "8px",
+              marginBottom: "6px",
+              background: "#faf9f7",
+            }}
+          >
+            <div
+              style={{
+                width: "28px",
+                height: "28px",
+                borderRadius: "50%",
+                background: s.c,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: "11px",
+                fontWeight: 700,
+                color: "white",
+                flexShrink: 0,
+                fontFamily: "system-ui",
+              }}
+            >
+              {s.i}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div
+                style={{
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  color: "#1a1208",
+                  fontFamily: "system-ui",
+                }}
+              >
+                {s.n}
+              </div>
+              <div
+                style={{
+                  fontSize: "10px",
+                  color: "#8a7a6a",
+                  marginBottom: "4px",
+                  fontFamily: "system-ui",
+                }}
+              >
+                {STAGES[s.s]} stage
+              </div>
+              <div style={{ display: "flex", gap: "3px" }}>
+                {STAGES.map((_, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      width: "14px",
+                      height: "14px",
+                      borderRadius: "50%",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: "8px",
+                      fontWeight: 700,
+                      fontFamily: "system-ui",
+                      background:
+                        i < s.s ? "#4ade80" : i === s.s ? "#800000" : "#e5e0d8",
+                      color: i <= s.s ? "white" : "#8a7a6a",
+                    }}
+                  >
+                    {i < s.s ? "✓" : i + 1}
+                  </div>
+                ))}
+              </div>
+              <div
+                style={{
+                  fontSize: "10px",
+                  color: "#6b5a4a",
+                  background: "white",
+                  border: "1px solid #e5e0d8",
+                  borderRadius: "6px",
+                  padding: "5px 8px",
+                  marginTop: "5px",
+                  fontStyle: "italic",
+                  lineHeight: 1.4,
+                  fontFamily: "system-ui",
+                }}
+              >
+                "{s.t.slice(0, 85)}..."
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
 
   return (
     <div
@@ -21,6 +616,13 @@ export default function LandingPage() {
         color: "#1a1208",
       }}
     >
+      <style>{`
+        @keyframes fadeUp {
+          from { opacity: 0; transform: translateY(6px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
+
       {/* Nav */}
       <nav
         style={{
@@ -81,7 +683,7 @@ export default function LandingPage() {
               fontSize: "14px",
               color: "#5a4a3a",
               textDecoration: "none",
-              fontFamily: "system-ui, sans-serif",
+              fontFamily: "system-ui",
             }}
           >
             Features
@@ -92,7 +694,7 @@ export default function LandingPage() {
               fontSize: "14px",
               color: "#5a4a3a",
               textDecoration: "none",
-              fontFamily: "system-ui, sans-serif",
+              fontFamily: "system-ui",
             }}
           >
             How it works
@@ -103,7 +705,7 @@ export default function LandingPage() {
               fontSize: "14px",
               color: "#5a4a3a",
               textDecoration: "none",
-              fontFamily: "system-ui, sans-serif",
+              fontFamily: "system-ui",
             }}
           >
             Sign in
@@ -117,7 +719,7 @@ export default function LandingPage() {
               borderRadius: "6px",
               fontSize: "14px",
               textDecoration: "none",
-              fontFamily: "system-ui, sans-serif",
+              fontFamily: "system-ui",
               fontWeight: 600,
             }}
           >
@@ -145,8 +747,7 @@ export default function LandingPage() {
             position: "absolute",
             inset: 0,
             zIndex: 0,
-            backgroundImage: `radial-gradient(circle at 20% 50%, rgba(128,0,0,0.04) 0%, transparent 50%),
-            radial-gradient(circle at 80% 20%, rgba(128,0,0,0.03) 0%, transparent 50%)`,
+            backgroundImage: `radial-gradient(circle at 20% 50%, rgba(128,0,0,0.04) 0%, transparent 50%), radial-gradient(circle at 80% 20%, rgba(128,0,0,0.03) 0%, transparent 50%)`,
           }}
         />
         <div
@@ -155,8 +756,7 @@ export default function LandingPage() {
             inset: 0,
             zIndex: 0,
             opacity: 0.025,
-            backgroundImage: `repeating-linear-gradient(0deg, #800000 0px, #800000 1px, transparent 1px, transparent 60px),
-            repeating-linear-gradient(90deg, #800000 0px, #800000 1px, transparent 1px, transparent 60px)`,
+            backgroundImage: `repeating-linear-gradient(0deg, #800000 0px, #800000 1px, transparent 1px, transparent 60px), repeating-linear-gradient(90deg, #800000 0px, #800000 1px, transparent 1px, transparent 60px)`,
           }}
         />
 
@@ -185,7 +785,7 @@ export default function LandingPage() {
               style={{
                 fontSize: "13px",
                 color: "#800000",
-                fontFamily: "system-ui, sans-serif",
+                fontFamily: "system-ui",
                 fontWeight: 500,
                 letterSpacing: "0.03em",
               }}
@@ -204,9 +804,9 @@ export default function LandingPage() {
               color: "#1a1208",
             }}
           >
-            AI that teaches,
+            AI that makes you
             <br />
-            <span style={{ color: "#800000" }}>not just answers.</span>
+            <span style={{ color: "#800000" }}>think, not just answer.</span>
           </h1>
 
           <p
@@ -215,15 +815,16 @@ export default function LandingPage() {
               lineHeight: 1.7,
               color: "#5a4a3a",
               marginBottom: "48px",
-              maxWidth: "560px",
+              maxWidth: "580px",
               margin: "0 auto 48px",
-              fontFamily: "system-ui, sans-serif",
+              fontFamily: "system-ui",
               fontWeight: 400,
             }}
           >
-            ThinkTrace governs AI usage in university courses — tracing every
-            student's reasoning process, enforcing structured thinking, and
-            giving instructors full visibility.
+            ThinkTrace doesn't do the work for you. It structures your thinking
+            — guiding you through each step so you genuinely understand, not
+            just submit. For students who want to learn, and instructors who
+            want to verify it.
           </p>
 
           <div
@@ -243,12 +844,12 @@ export default function LandingPage() {
                 borderRadius: "8px",
                 fontSize: "16px",
                 textDecoration: "none",
-                fontFamily: "system-ui, sans-serif",
+                fontFamily: "system-ui",
                 fontWeight: 600,
                 display: "inline-block",
               }}
             >
-              Start for free
+              Start thinking →
             </Link>
             <a
               href="#how-it-works"
@@ -259,7 +860,7 @@ export default function LandingPage() {
                 borderRadius: "8px",
                 fontSize: "16px",
                 textDecoration: "none",
-                fontFamily: "system-ui, sans-serif",
+                fontFamily: "system-ui",
                 fontWeight: 500,
                 border: "1px solid rgba(26,18,8,0.15)",
                 display: "inline-block",
@@ -270,208 +871,107 @@ export default function LandingPage() {
           </div>
         </div>
 
-        {/* Product mockup */}
+        {/* Animated Demo */}
         <div
           style={{
             marginTop: "80px",
             position: "relative",
             zIndex: 1,
             width: "100%",
-            maxWidth: "720px",
-            background: "white",
-            borderRadius: "16px",
-            border: "1px solid rgba(26,18,8,0.08)",
-            boxShadow:
-              "0 24px 64px rgba(128,0,0,0.08), 0 4px 16px rgba(0,0,0,0.04)",
-            overflow: "hidden",
+            maxWidth: "760px",
           }}
         >
           <div
             style={{
-              background: "#f5f3f0",
-              padding: "12px 16px",
-              borderBottom: "1px solid rgba(26,18,8,0.06)",
               display: "flex",
-              alignItems: "center",
               gap: "8px",
+              justifyContent: "center",
+              marginBottom: "14px",
+            }}
+          >
+            {[
+              { label: "Student view", key: "student" },
+              { label: "Instructor view", key: "instructor" },
+            ].map((v) => (
+              <button
+                key={v.key}
+                onClick={() => setDemoView(v.key as any)}
+                style={{
+                  padding: "7px 18px",
+                  borderRadius: "8px",
+                  fontSize: "13px",
+                  fontWeight: 600,
+                  border: "none",
+                  cursor: "pointer",
+                  fontFamily: "system-ui",
+                  transition: "all 0.2s",
+                  background: demoView === v.key ? "#800000" : "white",
+                  color: demoView === v.key ? "white" : "#5a4a3a",
+                  boxShadow: "0 1px 4px rgba(0,0,0,0.08)",
+                }}
+              >
+                {v.label}
+              </button>
+            ))}
+          </div>
+
+          <div
+            style={{
+              background: "white",
+              borderRadius: "16px",
+              border: "1px solid rgba(26,18,8,0.08)",
+              boxShadow: "0 24px 64px rgba(128,0,0,0.08)",
+              overflow: "hidden",
             }}
           >
             <div
               style={{
-                width: "10px",
-                height: "10px",
-                borderRadius: "50%",
-                background: "#ffbd44",
-              }}
-            />
-            <div
-              style={{
-                width: "10px",
-                height: "10px",
-                borderRadius: "50%",
-                background: "#00ca56",
-              }}
-            />
-            <div
-              style={{
-                width: "10px",
-                height: "10px",
-                borderRadius: "50%",
-                background: "#ff605c",
-              }}
-            />
-            <span
-              style={{
-                marginLeft: "12px",
-                fontSize: "12px",
-                color: "#8a7a6a",
-                fontFamily: "system-ui, sans-serif",
+                background: "#f5f3f0",
+                padding: "10px 14px",
+                borderBottom: "1px solid rgba(26,18,8,0.06)",
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
               }}
             >
-              ThinkTrace — Reasoning Workspace
-            </span>
-          </div>
-          <div style={{ display: "flex", minHeight: "280px" }}>
-            <div
-              style={{
-                width: "160px",
-                background: "#1e2a4a",
-                padding: "20px 16px",
-                flexShrink: 0,
-              }}
-            >
-              {[
-                "Understand",
-                "Concept",
-                "Plan",
-                "Attempt",
-                "Critique",
-                "Reflect",
-              ].map((s, i) => (
-                <div
-                  key={s}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "8px",
-                    padding: "8px 10px",
-                    borderRadius: "8px",
-                    marginBottom: "4px",
-                    background:
-                      i === 0 ? "rgba(255,255,255,0.15)" : "transparent",
-                  }}
-                >
-                  <div
-                    style={{
-                      width: "18px",
-                      height: "18px",
-                      borderRadius: "50%",
-                      background: i === 0 ? "white" : "rgba(255,255,255,0.2)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      fontSize: "10px",
-                      fontFamily: "system-ui, sans-serif",
-                      color: i === 0 ? "#1e2a4a" : "rgba(255,255,255,0.6)",
-                      fontWeight: 600,
-                    }}
-                  >
-                    {i + 1}
-                  </div>
-                  <span
-                    style={{
-                      fontSize: "12px",
-                      color: i === 0 ? "white" : "rgba(255,255,255,0.45)",
-                      fontFamily: "system-ui, sans-serif",
-                    }}
-                  >
-                    {s}
-                  </span>
-                </div>
-              ))}
-            </div>
-            <div style={{ flex: 1, padding: "24px", textAlign: "left" }}>
-              <div style={{ marginBottom: "16px" }}>
-                <span
-                  style={{
-                    fontSize: "11px",
-                    fontFamily: "system-ui, sans-serif",
-                    color: "#800000",
-                    fontWeight: 600,
-                    textTransform: "uppercase",
-                    letterSpacing: "0.08em",
-                  }}
-                >
-                  Problem 1
-                </span>
-                <p
-                  style={{
-                    fontSize: "14px",
-                    color: "#1a1208",
-                    marginTop: "4px",
-                    lineHeight: 1.6,
-                    fontFamily: "system-ui, sans-serif",
-                  }}
-                >
-                  Solve the recurrence T(n) = 2T(n/2) + n and express your
-                  answer using Big-O notation.
-                </p>
-              </div>
               <div
                 style={{
-                  background: "#faf9f7",
-                  borderRadius: "8px",
-                  padding: "12px",
-                  marginBottom: "12px",
-                  border: "1px solid rgba(26,18,8,0.06)",
+                  width: "10px",
+                  height: "10px",
+                  borderRadius: "50%",
+                  background: "#ffbd44",
                 }}
-              >
-                <p
-                  style={{
-                    fontSize: "12px",
-                    color: "#6b5a4a",
-                    fontFamily: "system-ui, sans-serif",
-                    lineHeight: 1.6,
-                    margin: 0,
-                  }}
-                >
-                  "This problem is asking me to analyze how the algorithm's
-                  runtime grows. The recurrence splits the input in half each
-                  time..."
-                </p>
-              </div>
+              />
               <div
                 style={{
-                  background: "rgba(128,0,0,0.04)",
-                  borderRadius: "8px",
-                  padding: "12px",
-                  border: "1px solid rgba(128,0,0,0.08)",
+                  width: "10px",
+                  height: "10px",
+                  borderRadius: "50%",
+                  background: "#00ca56",
+                }}
+              />
+              <div
+                style={{
+                  width: "10px",
+                  height: "10px",
+                  borderRadius: "50%",
+                  background: "#ff605c",
+                }}
+              />
+              <span
+                style={{
+                  marginLeft: "8px",
+                  fontSize: "12px",
+                  color: "#8a7a6a",
+                  fontFamily: "system-ui",
                 }}
               >
-                <span
-                  style={{
-                    fontSize: "11px",
-                    fontWeight: 600,
-                    color: "#800000",
-                    fontFamily: "system-ui, sans-serif",
-                  }}
-                >
-                  ThinkTrace AI
-                </span>
-                <p
-                  style={{
-                    fontSize: "12px",
-                    color: "#5a4a3a",
-                    fontFamily: "system-ui, sans-serif",
-                    lineHeight: 1.6,
-                    margin: "4px 0 0",
-                  }}
-                >
-                  Good start. What does each level of the recursion tree
-                  contribute to the total work done?
-                </p>
-              </div>
+                {demoView === "student"
+                  ? "ThinkTrace — Reasoning Workspace"
+                  : "ThinkTrace — Instructor Dashboard"}
+              </span>
             </div>
+            {demoView === "student" ? <StudentDemo /> : <InstructorDemo />}
           </div>
         </div>
       </section>
@@ -487,7 +987,7 @@ export default function LandingPage() {
               style={{
                 fontSize: "13px",
                 color: "#800000",
-                fontFamily: "system-ui, sans-serif",
+                fontFamily: "system-ui",
                 fontWeight: 600,
                 letterSpacing: "0.1em",
                 textTransform: "uppercase",
@@ -505,8 +1005,23 @@ export default function LandingPage() {
                 color: "#1a1208",
               }}
             >
-              Built for the age of AI in education
+              Built for learning, not shortcuts
             </h2>
+            <p
+              style={{
+                fontSize: "18px",
+                color: "#5a4a3a",
+                fontFamily: "system-ui",
+                marginTop: "16px",
+                maxWidth: "560px",
+                margin: "16px auto 0",
+                lineHeight: 1.7,
+              }}
+            >
+              ThinkTrace won't write your essay or solve your problem set. It
+              will make sure you do — and that you actually understand what
+              you're doing.
+            </p>
           </div>
 
           <div
@@ -522,33 +1037,33 @@ export default function LandingPage() {
             {[
               {
                 icon: "⟳",
-                title: "Reasoning traces",
-                body: "Every student response is timestamped and recorded — not just the final answer, but every step of their thinking from start to finish.",
-              },
-              {
-                icon: "⊞",
-                title: "Staged workspace",
-                body: "Six structured stages — Understand, Concept, Plan, Attempt, Critique, Reflect — force students to engage deeply before moving on.",
-              },
-              {
-                icon: "◈",
-                title: "AI governance levels",
-                body: "Instructors set AI intervention from Level 0 (no AI) to Level 4 (full collaboration). Every course, every assignment, fully controlled.",
+                title: "Six structured stages",
+                body: "Every problem goes through Understand, Concept, Plan, Attempt, Critique, and Reflect. You cannot skip. You cannot rush. Each stage has a clear objective you must meet before advancing.",
               },
               {
                 icon: "◎",
-                title: "Socratic AI tutor",
-                body: "ThinkTrace never gives the answer. It asks five targeted questions to confirm understanding before unlocking the next stage.",
+                title: "AI that questions, not answers",
+                body: "ThinkTrace never gives you the solution. It asks you five targeted questions per stage — pushing you to demonstrate genuine understanding before you move on.",
+              },
+              {
+                icon: "◈",
+                title: "Self-governance modes",
+                body: "Students set their own AI level — Deep Focus (no AI), Guided (Socratic only), or Open (collaborative). Your reasoning, your rules. Every interaction is still traced.",
+              },
+              {
+                icon: "⊞",
+                title: "Instructor governance",
+                body: "Instructors set AI intervention levels per course. Full visibility into every student's reasoning trace — not just the final answer, but every step of their thinking.",
               },
               {
                 icon: "⊡",
-                title: "PDF & image upload",
-                body: "Upload any assignment — PDF, image, or typed text. Gemini extracts every problem and creates individual workspaces automatically.",
+                title: "PDF and image upload",
+                body: "Upload any assignment — PDF, image, or text. ThinkTrace extracts every problem and sub-part automatically, creating individual structured workspaces for each.",
               },
               {
                 icon: "⊟",
-                title: "Self-governance",
-                body: "Students create personal workspaces to think through their own work — Deep Focus, Guided, or Open mode. Their thinking, their rules.",
+                title: "Complete reasoning traces",
+                body: "Every keystroke is timestamped and recorded across all six stages. Instructors see exactly where students struggled, where they succeeded, and where they guessed.",
               },
             ].map((f) => (
               <div
@@ -580,7 +1095,7 @@ export default function LandingPage() {
                     fontSize: "15px",
                     lineHeight: 1.7,
                     color: "#6b5a4a",
-                    fontFamily: "system-ui, sans-serif",
+                    fontFamily: "system-ui",
                     margin: 0,
                   }}
                 >
@@ -603,7 +1118,7 @@ export default function LandingPage() {
               style={{
                 fontSize: "13px",
                 color: "#800000",
-                fontFamily: "system-ui, sans-serif",
+                fontFamily: "system-ui",
                 fontWeight: 600,
                 letterSpacing: "0.1em",
                 textTransform: "uppercase",
@@ -621,7 +1136,7 @@ export default function LandingPage() {
                 color: "#1a1208",
               }}
             >
-              From assignment to audit trail
+              Your thinking, fully traced
             </h2>
           </div>
 
@@ -629,23 +1144,23 @@ export default function LandingPage() {
             {[
               {
                 num: "01",
-                title: "Instructor uploads an assignment",
-                body: "Paste text, upload a PDF, or drop an image. ThinkTrace extracts every problem automatically.",
+                title: "Upload or create a workspace",
+                body: "Instructors upload assignments — PDF, image, or text — and ThinkTrace extracts every problem automatically. Students can also create personal workspaces for any content they want to work through on their own.",
               },
               {
                 num: "02",
-                title: "Students enter the workspace",
-                body: "Each problem opens a six-stage reasoning workspace. Copy-paste is disabled. Every keystroke is traced.",
+                title: "Work through six structured stages",
+                body: "Every problem is broken into six stages: Understand, Concept, Plan, Attempt, Critique, Reflect. Each has a clear objective. You must meet it before advancing. Copy-paste is disabled. Every keystroke is traced.",
               },
               {
                 num: "03",
-                title: "AI guides, never answers",
-                body: "The Socratic tutor asks targeted questions. Students must demonstrate understanding before advancing.",
+                title: "AI guides — it never does the work",
+                body: "The Socratic tutor asks five targeted questions per stage. It will redirect you if you skip ahead. It will push back if your reasoning is shallow. It will never just give you the answer.",
               },
               {
                 num: "04",
-                title: "Instructors see everything",
-                body: "The dashboard shows each student's full reasoning trace — timestamped, stage by stage, problem by problem.",
+                title: "Everything is recorded",
+                body: "Students see their full reasoning arc across every stage. Instructors see every student's complete trace — timestamped, stage by stage, problem by problem. No hiding, no guessing, no shortcuts.",
               },
             ].map((step, i) => (
               <div
@@ -661,7 +1176,7 @@ export default function LandingPage() {
                 <div
                   style={{
                     fontSize: "13px",
-                    fontFamily: "system-ui, sans-serif",
+                    fontFamily: "system-ui",
                     fontWeight: 700,
                     color: "#800000",
                     letterSpacing: "0.05em",
@@ -688,7 +1203,7 @@ export default function LandingPage() {
                       fontSize: "16px",
                       lineHeight: 1.7,
                       color: "#6b5a4a",
-                      fontFamily: "system-ui, sans-serif",
+                      fontFamily: "system-ui",
                       margin: 0,
                     }}
                   >
@@ -715,8 +1230,7 @@ export default function LandingPage() {
           style={{
             position: "absolute",
             inset: 0,
-            backgroundImage: `radial-gradient(circle at 30% 50%, rgba(255,255,255,0.04) 0%, transparent 60%),
-            radial-gradient(circle at 70% 50%, rgba(255,255,255,0.03) 0%, transparent 60%)`,
+            backgroundImage: `radial-gradient(circle at 30% 50%, rgba(255,255,255,0.04) 0%, transparent 60%), radial-gradient(circle at 70% 50%, rgba(255,255,255,0.03) 0%, transparent 60%)`,
           }}
         />
         <div
@@ -737,7 +1251,7 @@ export default function LandingPage() {
               marginBottom: "24px",
             }}
           >
-            Ready to govern AI in your classroom?
+            Stop submitting. Start understanding.
           </h2>
           <p
             style={{
@@ -745,28 +1259,54 @@ export default function LandingPage() {
               lineHeight: 1.7,
               color: "rgba(255,255,255,0.7)",
               marginBottom: "48px",
-              fontFamily: "system-ui, sans-serif",
+              fontFamily: "system-ui",
             }}
           >
-            Join instructors using ThinkTrace to ensure students are actually
-            learning — not just prompting.
+            ThinkTrace is for students who want to actually learn — and
+            instructors who want to know they did.
           </p>
-          <Link
-            href="/signup"
+          <div
             style={{
-              background: "white",
-              color: "#800000",
-              padding: "16px 40px",
-              borderRadius: "8px",
-              fontSize: "16px",
-              textDecoration: "none",
-              fontFamily: "system-ui, sans-serif",
-              fontWeight: 700,
-              display: "inline-block",
+              display: "flex",
+              gap: "16px",
+              justifyContent: "center",
+              flexWrap: "wrap",
             }}
           >
-            Get started free
-          </Link>
+            <Link
+              href="/signup"
+              style={{
+                background: "white",
+                color: "#800000",
+                padding: "16px 40px",
+                borderRadius: "8px",
+                fontSize: "16px",
+                textDecoration: "none",
+                fontFamily: "system-ui",
+                fontWeight: 700,
+                display: "inline-block",
+              }}
+            >
+              Start for free
+            </Link>
+            <Link
+              href="/login"
+              style={{
+                background: "transparent",
+                color: "rgba(255,255,255,0.8)",
+                padding: "16px 40px",
+                borderRadius: "8px",
+                fontSize: "16px",
+                textDecoration: "none",
+                fontFamily: "system-ui",
+                fontWeight: 500,
+                border: "1px solid rgba(255,255,255,0.3)",
+                display: "inline-block",
+              }}
+            >
+              Sign in
+            </Link>
+          </div>
         </div>
       </section>
 
@@ -802,7 +1342,7 @@ export default function LandingPage() {
             style={{
               color: "rgba(255,255,255,0.5)",
               fontSize: "14px",
-              fontFamily: "system-ui, sans-serif",
+              fontFamily: "system-ui",
             }}
           >
             ThinkTrace © 2026
@@ -815,7 +1355,7 @@ export default function LandingPage() {
               color: "rgba(255,255,255,0.4)",
               fontSize: "13px",
               textDecoration: "none",
-              fontFamily: "system-ui, sans-serif",
+              fontFamily: "system-ui",
             }}
           >
             Sign in
@@ -826,7 +1366,7 @@ export default function LandingPage() {
               color: "rgba(255,255,255,0.4)",
               fontSize: "13px",
               textDecoration: "none",
-              fontFamily: "system-ui, sans-serif",
+              fontFamily: "system-ui",
             }}
           >
             Sign up
