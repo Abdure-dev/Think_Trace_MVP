@@ -3,6 +3,11 @@
 import Link from "next/link";
 import { useState, useEffect } from "react";
 
+const MAROON = "#800000";
+const PURPLE = "#4E2A84";
+const MAROON_LIGHT = "rgba(128,0,0,0.08)";
+const PURPLE_LIGHT = "rgba(78,42,132,0.08)";
+
 const STAGES = [
   "Understand",
   "Concept",
@@ -82,7 +87,7 @@ const CONVERSATIONS = [
   [
     {
       r: "student",
-      t: "I learned that when work per level equals the branching factor, we get Θ(n log n). The log factor comes from the recursion depth, not the branching.",
+      t: "I learned that when work per level equals the branching factor, we get Θ(n log n). The log factor comes from the recursion depth.",
     },
     {
       r: "ai",
@@ -95,28 +100,28 @@ const STUDENTS = [
   {
     n: "Amir Hassan",
     i: "AH",
-    c: "#800000",
+    c: MAROON,
     s: 5,
-    t: "The recurrence splits into 2 sub-problems each of size n/2. The n term at each level is what gives us the log factor...",
+    t: "The recurrence splits into 2 sub-problems each of size n/2. The n term at each level gives us the log factor...",
   },
   {
     n: "Sara Chen",
     i: "SC",
-    c: "#1e2a4a",
+    c: PURPLE,
     s: 3,
     t: "I need Master Theorem. a=2, b=2, log_b(a)=1. Comparing f(n)=n to n^1 shows this is Case 2...",
   },
   {
     n: "Marcus Webb",
     i: "MW",
-    c: "#2d6a4f",
+    c: "#1e2a4a",
     s: 2,
     t: "This is divide and conquer. The algorithm splits the input in half at every step of the recursion...",
   },
   {
     n: "Lena Okafor",
     i: "LO",
-    c: "#854f0b",
+    c: "#2d6a4f",
     s: 1,
     t: "T(n) = 2T(n/2) + n means we divide into 2 halves and do n additional work at each level...",
   },
@@ -156,23 +161,65 @@ export default function LandingPage() {
   function StudentDemo() {
     const convos = CONVERSATIONS[demoStage];
     return (
-      <div style={{ display: "flex", minHeight: "340px" }}>
+      <div style={{ display: "flex", minHeight: "360px" }}>
+        {/* Sidebar — Northwestern Purple */}
         <div
           style={{
-            width: "140px",
-            background: "#1e2a4a",
+            width: "148px",
+            background: PURPLE,
             padding: "16px 12px",
             flexShrink: 0,
           }}
         >
           <div
             style={{
-              fontSize: "10px",
-              color: "rgba(147,197,253,0.6)",
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              marginBottom: "16px",
+            }}
+          >
+            <div
+              style={{
+                width: "24px",
+                height: "24px",
+                background: MAROON,
+                borderRadius: "5px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <span
+                style={{
+                  color: "white",
+                  fontWeight: 700,
+                  fontSize: "12px",
+                  fontFamily: "Georgia, serif",
+                }}
+              >
+                T
+              </span>
+            </div>
+            <span
+              style={{
+                color: "white",
+                fontWeight: 700,
+                fontSize: "13px",
+                fontFamily: "system-ui",
+              }}
+            >
+              ThinkTrace
+            </span>
+          </div>
+          <div
+            style={{
+              fontSize: "9px",
+              color: "rgba(255,255,255,0.5)",
               textTransform: "uppercase",
               letterSpacing: "0.08em",
               fontWeight: 600,
-              marginBottom: "10px",
+              marginBottom: "8px",
               fontFamily: "system-ui",
             }}
           >
@@ -184,40 +231,35 @@ export default function LandingPage() {
               style={{
                 display: "flex",
                 alignItems: "center",
-                gap: "8px",
-                padding: "7px 8px",
+                gap: "7px",
+                padding: "6px 8px",
                 borderRadius: "8px",
-                marginBottom: "3px",
+                marginBottom: "2px",
                 background:
-                  i === demoStage ? "rgba(255,255,255,0.18)" : "transparent",
+                  i === demoStage ? "rgba(255,255,255,0.2)" : "transparent",
                 transition: "all 0.4s",
               }}
             >
               <div
                 style={{
-                  width: "18px",
-                  height: "18px",
+                  width: "17px",
+                  height: "17px",
                   borderRadius: "50%",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  fontSize: "10px",
+                  fontSize: "9px",
                   fontWeight: 700,
                   flexShrink: 0,
                   fontFamily: "system-ui",
+                  transition: "all 0.4s",
                   background:
                     i < demoStage
                       ? "#4ade80"
                       : i === demoStage
-                      ? "white"
-                      : "rgba(255,255,255,0.2)",
-                  color:
-                    i < demoStage
-                      ? "white"
-                      : i === demoStage
-                      ? "#1e2a4a"
-                      : "rgba(255,255,255,0.5)",
-                  transition: "all 0.4s",
+                      ? MAROON
+                      : "rgba(255,255,255,0.15)",
+                  color: "white",
                 }}
               >
                 {i < demoStage ? "✓" : i + 1}
@@ -226,14 +268,14 @@ export default function LandingPage() {
                 style={{
                   fontSize: "11px",
                   fontFamily: "system-ui",
-                  transition: "color 0.4s",
                   color:
                     i < demoStage
                       ? "#4ade80"
                       : i === demoStage
                       ? "white"
-                      : "rgba(255,255,255,0.45)",
+                      : "rgba(255,255,255,0.4)",
                   fontWeight: i === demoStage ? 600 : 400,
+                  transition: "all 0.4s",
                 }}
               >
                 {s}
@@ -242,6 +284,7 @@ export default function LandingPage() {
           ))}
         </div>
 
+        {/* Main panel */}
         <div
           style={{
             flex: 1,
@@ -251,6 +294,7 @@ export default function LandingPage() {
             gap: "10px",
           }}
         >
+          {/* Problem */}
           <div
             style={{
               background: "#faf9f7",
@@ -263,7 +307,9 @@ export default function LandingPage() {
               style={{
                 fontSize: "10px",
                 fontWeight: 700,
-                color: "#800000",
+                background: `linear-gradient(90deg, ${MAROON}, ${PURPLE})`,
+                WebkitBackgroundClip: "text",
+                WebkitTextFillColor: "transparent",
                 textTransform: "uppercase",
                 letterSpacing: "0.08em",
                 marginBottom: "4px",
@@ -285,6 +331,7 @@ export default function LandingPage() {
             </div>
           </div>
 
+          {/* Stage header */}
           <div
             style={{
               display: "flex",
@@ -317,10 +364,11 @@ export default function LandingPage() {
             </span>
           </div>
 
+          {/* Objective */}
           <div
             style={{
-              background: "#eff6ff",
-              border: "1px solid #bfdbfe",
+              background: PURPLE_LIGHT,
+              border: `1px solid rgba(78,42,132,0.15)`,
               borderRadius: "8px",
               padding: "8px 10px",
             }}
@@ -329,7 +377,7 @@ export default function LandingPage() {
               style={{
                 fontSize: "9px",
                 fontWeight: 700,
-                color: "#1d4ed8",
+                color: PURPLE,
                 textTransform: "uppercase",
                 letterSpacing: "0.08em",
                 marginBottom: "3px",
@@ -341,7 +389,7 @@ export default function LandingPage() {
             <div
               style={{
                 fontSize: "11px",
-                color: "#1e40af",
+                color: "#3b1e6e",
                 lineHeight: 1.4,
                 fontFamily: "system-ui",
               }}
@@ -350,6 +398,7 @@ export default function LandingPage() {
             </div>
           </div>
 
+          {/* Progress bar — maroon to purple gradient */}
           <div
             style={{
               height: "3px",
@@ -360,14 +409,15 @@ export default function LandingPage() {
             <div
               style={{
                 height: "100%",
-                background: "#800000",
                 borderRadius: "2px",
                 width: `${(demoStage / STAGES.length) * 100}%`,
+                background: `linear-gradient(90deg, ${MAROON}, ${PURPLE})`,
                 transition: "width 0.8s ease",
               }}
             />
           </div>
 
+          {/* Chat bubbles */}
           <div
             style={{
               display: "flex",
@@ -387,13 +437,12 @@ export default function LandingPage() {
                   fontFamily: "system-ui",
                   marginLeft: msg.r === "student" ? "20px" : "0",
                   marginRight: msg.r === "ai" ? "20px" : "0",
-                  background:
-                    msg.r === "student" ? "#f3f4f6" : "rgba(128,0,0,0.04)",
+                  background: msg.r === "student" ? "#f3f4f6" : PURPLE_LIGHT,
                   border:
                     msg.r === "student"
                       ? "1px solid #e5e7eb"
-                      : "1px solid rgba(128,0,0,0.1)",
-                  color: msg.r === "student" ? "#374151" : "#5a4a3a",
+                      : `1px solid rgba(78,42,132,0.15)`,
+                  color: msg.r === "student" ? "#374151" : "#3b1e6e",
                   animation: "fadeUp 0.4s ease",
                 }}
               >
@@ -402,7 +451,7 @@ export default function LandingPage() {
                     fontSize: "9px",
                     fontWeight: 700,
                     marginBottom: "3px",
-                    color: msg.r === "student" ? "#9ca3af" : "#800000",
+                    color: msg.r === "student" ? "#9ca3af" : PURPLE,
                   }}
                 >
                   {msg.r === "student" ? "You" : "ThinkTrace AI"}
@@ -450,7 +499,7 @@ export default function LandingPage() {
           </div>
           <div
             style={{
-              background: "#800000",
+              background: `linear-gradient(135deg, ${MAROON}, ${PURPLE})`,
               color: "white",
               fontSize: "11px",
               fontWeight: 600,
@@ -472,9 +521,9 @@ export default function LandingPage() {
           }}
         >
           {[
-            { n: "24", l: "Students active" },
-            { n: "18", l: "On track" },
-            { n: "6", l: "Need attention", c: "#800000" },
+            { n: "24", l: "Students active", c: "#1a1208" },
+            { n: "18", l: "On track", c: "#16a34a" },
+            { n: "6", l: "Need attention", c: MAROON },
           ].map((s) => (
             <div
               key={s.l}
@@ -489,7 +538,7 @@ export default function LandingPage() {
                 style={{
                   fontSize: "20px",
                   fontWeight: 700,
-                  color: (s as any).c || "#1a1208",
+                  color: s.c,
                   fontFamily: "system-ui",
                 }}
               >
@@ -576,7 +625,11 @@ export default function LandingPage() {
                       fontWeight: 700,
                       fontFamily: "system-ui",
                       background:
-                        i < s.s ? "#4ade80" : i === s.s ? "#800000" : "#e5e0d8",
+                        i < s.s
+                          ? `linear-gradient(135deg, ${MAROON}, ${PURPLE})`
+                          : i === s.s
+                          ? PURPLE
+                          : "#e5e0d8",
                       color: i <= s.s ? "white" : "#8a7a6a",
                     }}
                   >
@@ -598,7 +651,7 @@ export default function LandingPage() {
                   fontFamily: "system-ui",
                 }}
               >
-                "{s.t.slice(0, 85)}..."
+                "{s.t.slice(0, 80)}..."
               </div>
             </div>
           </div>
@@ -617,10 +670,52 @@ export default function LandingPage() {
       }}
     >
       <style>{`
-        @keyframes fadeUp {
-          from { opacity: 0; transform: translateY(6px); }
-          to { opacity: 1; transform: translateY(0); }
+        @keyframes fadeUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes float { 0%,100% { transform: translateY(0px); } 50% { transform: translateY(-8px); } }
+        @keyframes shimmer { 0% { background-position: -200% center; } 100% { background-position: 200% center; } }
+        .gradient-text {
+          background: linear-gradient(135deg, ${MAROON} 0%, ${PURPLE} 100%);
+          -webkit-background-clip: text;
+          -webkit-text-fill-color: transparent;
+          background-clip: text;
         }
+        .shimmer-text {
+          background: linear-gradient(90deg, ${MAROON} 0%, ${PURPLE} 40%, ${MAROON} 80%, ${PURPLE} 100%);
+          background-size: 200% auto;
+          -webkit-background-clip: text;
+          -webkit-text-fill-color: transparent;
+          background-clip: text;
+          animation: shimmer 4s linear infinite;
+        }
+        .cta-primary {
+          background: linear-gradient(135deg, ${MAROON} 0%, ${PURPLE} 100%);
+          color: white;
+          padding: 16px 40px;
+          border-radius: 8px;
+          font-size: 16px;
+          text-decoration: none;
+          font-family: system-ui;
+          font-weight: 700;
+          display: inline-block;
+          transition: opacity 0.2s;
+        }
+        .cta-primary:hover { opacity: 0.9; }
+        .cta-secondary {
+          background: white;
+          color: #1a1208;
+          padding: 16px 40px;
+          border-radius: 8px;
+          font-size: 16px;
+          text-decoration: none;
+          font-family: system-ui;
+          font-weight: 500;
+          border: 1px solid rgba(26,18,8,0.15);
+          display: inline-block;
+          transition: all 0.2s;
+        }
+        .cta-secondary:hover { border-color: ${PURPLE}; color: ${PURPLE}; }
+        .feature-card:hover { transform: translateY(-2px); box-shadow: 0 8px 32px rgba(78,42,132,0.1); }
+        .feature-card { transition: all 0.2s; }
       `}</style>
 
       {/* Nav */}
@@ -647,7 +742,7 @@ export default function LandingPage() {
             style={{
               width: "32px",
               height: "32px",
-              background: "#800000",
+              background: `linear-gradient(135deg, ${MAROON}, ${PURPLE})`,
               borderRadius: "6px",
               display: "flex",
               alignItems: "center",
@@ -713,7 +808,7 @@ export default function LandingPage() {
           <Link
             href="/signup"
             style={{
-              background: "#800000",
+              background: `linear-gradient(135deg, ${MAROON}, ${PURPLE})`,
               color: "white",
               padding: "8px 20px",
               borderRadius: "6px",
@@ -742,35 +837,139 @@ export default function LandingPage() {
           textAlign: "center",
         }}
       >
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            zIndex: 0,
-            backgroundImage: `radial-gradient(circle at 20% 50%, rgba(128,0,0,0.04) 0%, transparent 50%), radial-gradient(circle at 80% 20%, rgba(128,0,0,0.03) 0%, transparent 50%)`,
-          }}
-        />
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            zIndex: 0,
-            opacity: 0.025,
-            backgroundImage: `repeating-linear-gradient(0deg, #800000 0px, #800000 1px, transparent 1px, transparent 60px), repeating-linear-gradient(90deg, #800000 0px, #800000 1px, transparent 1px, transparent 60px)`,
-          }}
-        />
+        {/* Background elements */}
+        <div style={{ position: "absolute", inset: 0, zIndex: 0 }}>
+          {/* Grid */}
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              opacity: 0.025,
+              backgroundImage: `repeating-linear-gradient(0deg, ${PURPLE} 0px, ${PURPLE} 1px, transparent 1px, transparent 60px), repeating-linear-gradient(90deg, ${MAROON} 0px, ${MAROON} 1px, transparent 1px, transparent 60px)`,
+            }}
+          />
+          {/* Maroon glow left */}
+          <div
+            style={{
+              position: "absolute",
+              top: "20%",
+              left: "-10%",
+              width: "500px",
+              height: "500px",
+              borderRadius: "50%",
+              background: `radial-gradient(circle, rgba(128,0,0,0.08) 0%, transparent 70%)`,
+            }}
+          />
+          {/* Purple glow right */}
+          <div
+            style={{
+              position: "absolute",
+              top: "10%",
+              right: "-10%",
+              width: "500px",
+              height: "500px",
+              borderRadius: "50%",
+              background: `radial-gradient(circle, rgba(78,42,132,0.08) 0%, transparent 70%)`,
+            }}
+          />
+          {/* Bottom blend */}
+          <div
+            style={{
+              position: "absolute",
+              bottom: 0,
+              left: 0,
+              right: 0,
+              height: "200px",
+              background: "linear-gradient(to bottom, transparent, #faf9f7)",
+            }}
+          />
+        </div>
 
-        <div style={{ position: "relative", zIndex: 1, maxWidth: "800px" }}>
+        {/* University badges */}
+        <div
+          style={{
+            position: "relative",
+            zIndex: 1,
+            display: "flex",
+            gap: "12px",
+            marginBottom: "40px",
+            justifyContent: "center",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              background: "white",
+              border: `1px solid rgba(128,0,0,0.15)`,
+              borderRadius: "100px",
+              padding: "5px 14px",
+            }}
+          >
+            <div
+              style={{
+                width: "8px",
+                height: "8px",
+                borderRadius: "50%",
+                background: MAROON,
+              }}
+            />
+            <span
+              style={{
+                fontSize: "12px",
+                color: MAROON,
+                fontFamily: "system-ui",
+                fontWeight: 600,
+              }}
+            >
+              University of Chicago
+            </span>
+          </div>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              background: "white",
+              border: `1px solid rgba(78,42,132,0.15)`,
+              borderRadius: "100px",
+              padding: "5px 14px",
+            }}
+          >
+            <div
+              style={{
+                width: "8px",
+                height: "8px",
+                borderRadius: "50%",
+                background: PURPLE,
+              }}
+            />
+            <span
+              style={{
+                fontSize: "12px",
+                color: PURPLE,
+                fontFamily: "system-ui",
+                fontWeight: 600,
+              }}
+            >
+              Northwestern University
+            </span>
+          </div>
+        </div>
+
+        <div style={{ position: "relative", zIndex: 1, maxWidth: "860px" }}>
+          {/* Eyebrow */}
           <div
             style={{
               display: "inline-flex",
               alignItems: "center",
               gap: "8px",
-              background: "rgba(128,0,0,0.06)",
-              border: "1px solid rgba(128,0,0,0.15)",
+              background: "rgba(78,42,132,0.06)",
+              border: "1px solid rgba(78,42,132,0.15)",
               borderRadius: "100px",
               padding: "6px 16px",
-              marginBottom: "40px",
+              marginBottom: "32px",
             }}
           >
             <div
@@ -778,13 +977,13 @@ export default function LandingPage() {
                 width: "6px",
                 height: "6px",
                 borderRadius: "50%",
-                background: "#800000",
+                background: `linear-gradient(135deg, ${MAROON}, ${PURPLE})`,
               }}
             />
             <span
               style={{
                 fontSize: "13px",
-                color: "#800000",
+                color: PURPLE,
                 fontFamily: "system-ui",
                 fontWeight: 500,
                 letterSpacing: "0.03em",
@@ -794,78 +993,90 @@ export default function LandingPage() {
             </span>
           </div>
 
+          {/* Main headline */}
           <h1
             style={{
-              fontSize: "clamp(48px, 8vw, 88px)",
-              lineHeight: 1.05,
+              fontSize: "clamp(52px, 9vw, 96px)",
+              lineHeight: 1.0,
               fontWeight: 700,
               letterSpacing: "-0.03em",
-              marginBottom: "28px",
+              marginBottom: "12px",
               color: "#1a1208",
             }}
           >
             AI that makes you
-            <br />
-            <span style={{ color: "#800000" }}>think, not just answer.</span>
+          </h1>
+          <h1
+            className="shimmer-text"
+            style={{
+              fontSize: "clamp(52px, 9vw, 96px)",
+              lineHeight: 1.0,
+              fontWeight: 700,
+              letterSpacing: "-0.03em",
+              marginBottom: "32px",
+            }}
+          >
+            think, not just answer.
           </h1>
 
+          {/* Subheadline */}
           <p
             style={{
               fontSize: "20px",
-              lineHeight: 1.7,
+              lineHeight: 1.75,
               color: "#5a4a3a",
+              marginBottom: "24px",
+              maxWidth: "620px",
+              margin: "0 auto 24px",
+              fontFamily: "system-ui",
+              fontWeight: 400,
+            }}
+          >
+            ThinkTrace won't do the work for you. It structures your thinking
+            through six rigorous stages — so you genuinely understand, not just
+            submit.
+          </p>
+
+          {/* Secondary line */}
+          <p
+            style={{
+              fontSize: "15px",
+              lineHeight: 1.6,
               marginBottom: "48px",
-              maxWidth: "580px",
+              maxWidth: "520px",
               margin: "0 auto 48px",
               fontFamily: "system-ui",
               fontWeight: 400,
             }}
           >
-            ThinkTrace doesn't do the work for you. It structures your thinking
-            — guiding you through each step so you genuinely understand, not
-            just submit. For students who want to learn, and instructors who
-            want to verify it.
+            <span style={{ color: MAROON, fontWeight: 600 }}>For students</span>
+            <span style={{ color: "#8a7a6a" }}>
+              {" "}
+              who want to actually learn.{" "}
+            </span>
+            <span style={{ color: PURPLE, fontWeight: 600 }}>
+              For instructors
+            </span>
+            <span style={{ color: "#8a7a6a" }}>
+              {" "}
+              who want to verify they did.
+            </span>
           </p>
 
+          {/* CTAs */}
           <div
             style={{
               display: "flex",
               gap: "16px",
               justifyContent: "center",
               flexWrap: "wrap",
+              marginBottom: "80px",
             }}
           >
-            <Link
-              href="/signup"
-              style={{
-                background: "#800000",
-                color: "white",
-                padding: "14px 32px",
-                borderRadius: "8px",
-                fontSize: "16px",
-                textDecoration: "none",
-                fontFamily: "system-ui",
-                fontWeight: 600,
-                display: "inline-block",
-              }}
-            >
+            <Link href="/signup" className="cta-primary">
               Start thinking →
             </Link>
-            <a
-              href="#how-it-works"
-              style={{
-                background: "white",
-                color: "#1a1208",
-                padding: "14px 32px",
-                borderRadius: "8px",
-                fontSize: "16px",
-                textDecoration: "none",
-                fontFamily: "system-ui",
-                fontWeight: 500,
-                border: "1px solid rgba(26,18,8,0.15)",
-                display: "inline-block",
-              }}
-            >
+            <a href="#how-it-works" className="cta-secondary">
               See how it works
             </a>
           </div>
@@ -874,13 +1085,13 @@ export default function LandingPage() {
         {/* Animated Demo */}
         <div
           style={{
-            marginTop: "80px",
             position: "relative",
             zIndex: 1,
             width: "100%",
-            maxWidth: "760px",
+            maxWidth: "780px",
           }}
         >
+          {/* Toggle */}
           <div
             style={{
               display: "flex",
@@ -905,7 +1116,10 @@ export default function LandingPage() {
                   cursor: "pointer",
                   fontFamily: "system-ui",
                   transition: "all 0.2s",
-                  background: demoView === v.key ? "#800000" : "white",
+                  background:
+                    demoView === v.key
+                      ? `linear-gradient(135deg, ${MAROON}, ${PURPLE})`
+                      : "white",
                   color: demoView === v.key ? "white" : "#5a4a3a",
                   boxShadow: "0 1px 4px rgba(0,0,0,0.08)",
                 }}
@@ -915,15 +1129,17 @@ export default function LandingPage() {
             ))}
           </div>
 
+          {/* Window */}
           <div
             style={{
               background: "white",
               borderRadius: "16px",
               border: "1px solid rgba(26,18,8,0.08)",
-              boxShadow: "0 24px 64px rgba(128,0,0,0.08)",
+              boxShadow: "0 24px 64px rgba(78,42,132,0.1)",
               overflow: "hidden",
             }}
           >
+            {/* Titlebar */}
             <div
               style={{
                 background: "#f5f3f0",
@@ -986,12 +1202,14 @@ export default function LandingPage() {
             <p
               style={{
                 fontSize: "13px",
-                color: "#800000",
                 fontFamily: "system-ui",
                 fontWeight: 600,
                 letterSpacing: "0.1em",
                 textTransform: "uppercase",
                 marginBottom: "16px",
+                background: `linear-gradient(135deg, ${MAROON}, ${PURPLE})`,
+                WebkitBackgroundClip: "text",
+                WebkitTextFillColor: "transparent",
               }}
             >
               Why ThinkTrace
@@ -1005,7 +1223,9 @@ export default function LandingPage() {
                 color: "#1a1208",
               }}
             >
-              Built for learning, not shortcuts
+              Built for learning,
+              <br />
+              not shortcuts.
             </h2>
             <p
               style={{
@@ -1039,46 +1259,62 @@ export default function LandingPage() {
                 icon: "⟳",
                 title: "Six structured stages",
                 body: "Every problem goes through Understand, Concept, Plan, Attempt, Critique, and Reflect. You cannot skip. You cannot rush. Each stage has a clear objective you must meet before advancing.",
+                accent: MAROON,
               },
               {
                 icon: "◎",
                 title: "AI that questions, not answers",
-                body: "ThinkTrace never gives you the solution. It asks you five targeted questions per stage — pushing you to demonstrate genuine understanding before you move on.",
+                body: "ThinkTrace never gives you the solution. It asks five targeted Socratic questions per stage — pushing you to demonstrate genuine understanding before you move on.",
+                accent: PURPLE,
               },
               {
                 icon: "◈",
                 title: "Self-governance modes",
                 body: "Students set their own AI level — Deep Focus (no AI), Guided (Socratic only), or Open (collaborative). Your reasoning, your rules. Every interaction is still traced.",
+                accent: MAROON,
               },
               {
                 icon: "⊞",
                 title: "Instructor governance",
                 body: "Instructors set AI intervention levels per course. Full visibility into every student's reasoning trace — not just the final answer, but every step of their thinking.",
+                accent: PURPLE,
               },
               {
                 icon: "⊡",
                 title: "PDF and image upload",
                 body: "Upload any assignment — PDF, image, or text. ThinkTrace extracts every problem and sub-part automatically, creating individual structured workspaces for each.",
+                accent: MAROON,
               },
               {
                 icon: "⊟",
                 title: "Complete reasoning traces",
                 body: "Every keystroke is timestamped and recorded across all six stages. Instructors see exactly where students struggled, where they succeeded, and where they guessed.",
+                accent: PURPLE,
               },
             ].map((f) => (
               <div
                 key={f.title}
+                className="feature-card"
                 style={{ background: "white", padding: "40px 36px" }}
               >
                 <div
                   style={{
                     fontSize: "24px",
                     marginBottom: "16px",
-                    color: "#800000",
+                    color: f.accent,
                   }}
                 >
                   {f.icon}
                 </div>
+                <div
+                  style={{
+                    width: "32px",
+                    height: "3px",
+                    borderRadius: "2px",
+                    background: `linear-gradient(90deg, ${MAROON}, ${PURPLE})`,
+                    marginBottom: "16px",
+                  }}
+                />
                 <h3
                   style={{
                     fontSize: "18px",
@@ -1117,12 +1353,14 @@ export default function LandingPage() {
             <p
               style={{
                 fontSize: "13px",
-                color: "#800000",
                 fontFamily: "system-ui",
                 fontWeight: 600,
                 letterSpacing: "0.1em",
                 textTransform: "uppercase",
                 marginBottom: "16px",
+                background: `linear-gradient(135deg, ${MAROON}, ${PURPLE})`,
+                WebkitBackgroundClip: "text",
+                WebkitTextFillColor: "transparent",
               }}
             >
               How it works
@@ -1136,7 +1374,7 @@ export default function LandingPage() {
                 color: "#1a1208",
               }}
             >
-              Your thinking, fully traced
+              Your thinking, fully traced.
             </h2>
           </div>
 
@@ -1145,22 +1383,26 @@ export default function LandingPage() {
               {
                 num: "01",
                 title: "Upload or create a workspace",
-                body: "Instructors upload assignments — PDF, image, or text — and ThinkTrace extracts every problem automatically. Students can also create personal workspaces for any content they want to work through on their own.",
+                body: "Instructors upload assignments — PDF, image, or text — and ThinkTrace extracts every problem automatically. Students can also create personal workspaces for any content they want to work through on their own terms.",
+                color: MAROON,
               },
               {
                 num: "02",
                 title: "Work through six structured stages",
                 body: "Every problem is broken into six stages: Understand, Concept, Plan, Attempt, Critique, Reflect. Each has a clear objective. You must meet it before advancing. Copy-paste is disabled. Every keystroke is traced.",
+                color: PURPLE,
               },
               {
                 num: "03",
                 title: "AI guides — it never does the work",
-                body: "The Socratic tutor asks five targeted questions per stage. It will redirect you if you skip ahead. It will push back if your reasoning is shallow. It will never just give you the answer.",
+                body: "The Socratic tutor asks five targeted questions per stage. It will redirect you if you skip ahead. It will push back if your reasoning is shallow. It will never give you the answer.",
+                color: MAROON,
               },
               {
                 num: "04",
                 title: "Everything is recorded",
                 body: "Students see their full reasoning arc across every stage. Instructors see every student's complete trace — timestamped, stage by stage, problem by problem. No hiding, no guessing, no shortcuts.",
+                color: PURPLE,
               },
             ].map((step, i) => (
               <div
@@ -1178,10 +1420,10 @@ export default function LandingPage() {
                     fontSize: "13px",
                     fontFamily: "system-ui",
                     fontWeight: 700,
-                    color: "#800000",
                     letterSpacing: "0.05em",
                     minWidth: "32px",
                     paddingTop: "4px",
+                    color: step.color,
                   }}
                 >
                   {step.num}
@@ -1220,7 +1462,7 @@ export default function LandingPage() {
       <section
         style={{
           padding: "120px 48px",
-          background: "#800000",
+          background: `linear-gradient(135deg, ${MAROON} 0%, #5c1a5c 50%, ${PURPLE} 100%)`,
           textAlign: "center",
           position: "relative",
           overflow: "hidden",
@@ -1230,28 +1472,105 @@ export default function LandingPage() {
           style={{
             position: "absolute",
             inset: 0,
-            backgroundImage: `radial-gradient(circle at 30% 50%, rgba(255,255,255,0.04) 0%, transparent 60%), radial-gradient(circle at 70% 50%, rgba(255,255,255,0.03) 0%, transparent 60%)`,
+            backgroundImage: `radial-gradient(circle at 30% 50%, rgba(255,255,255,0.05) 0%, transparent 60%), radial-gradient(circle at 70% 50%, rgba(255,255,255,0.03) 0%, transparent 60%)`,
+          }}
+        />
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            opacity: 0.04,
+            backgroundImage: `repeating-linear-gradient(0deg, white 0px, white 1px, transparent 1px, transparent 60px), repeating-linear-gradient(90deg, white 0px, white 1px, transparent 1px, transparent 60px)`,
           }}
         />
         <div
           style={{
             position: "relative",
             zIndex: 1,
-            maxWidth: "600px",
+            maxWidth: "640px",
             margin: "0 auto",
           }}
         >
+          <div
+            style={{
+              display: "flex",
+              gap: "12px",
+              justifyContent: "center",
+              marginBottom: "40px",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+                background: "rgba(255,255,255,0.12)",
+                borderRadius: "100px",
+                padding: "5px 14px",
+              }}
+            >
+              <div
+                style={{
+                  width: "8px",
+                  height: "8px",
+                  borderRadius: "50%",
+                  background: "rgba(255,255,255,0.6)",
+                }}
+              />
+              <span
+                style={{
+                  fontSize: "12px",
+                  color: "rgba(255,255,255,0.8)",
+                  fontFamily: "system-ui",
+                  fontWeight: 600,
+                }}
+              >
+                University of Chicago
+              </span>
+            </div>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+                background: "rgba(255,255,255,0.12)",
+                borderRadius: "100px",
+                padding: "5px 14px",
+              }}
+            >
+              <div
+                style={{
+                  width: "8px",
+                  height: "8px",
+                  borderRadius: "50%",
+                  background: "rgba(255,255,255,0.6)",
+                }}
+              />
+              <span
+                style={{
+                  fontSize: "12px",
+                  color: "rgba(255,255,255,0.8)",
+                  fontFamily: "system-ui",
+                  fontWeight: 600,
+                }}
+              >
+                Northwestern University
+              </span>
+            </div>
+          </div>
           <h2
             style={{
-              fontSize: "clamp(36px, 6vw, 60px)",
+              fontSize: "clamp(36px, 6vw, 64px)",
               fontWeight: 700,
               letterSpacing: "-0.025em",
-              lineHeight: 1.1,
+              lineHeight: 1.05,
               color: "white",
               marginBottom: "24px",
             }}
           >
-            Stop submitting. Start understanding.
+            Stop submitting.
+            <br />
+            Start understanding.
           </h2>
           <p
             style={{
@@ -1277,7 +1596,7 @@ export default function LandingPage() {
               href="/signup"
               style={{
                 background: "white",
-                color: "#800000",
+                color: MAROON,
                 padding: "16px 40px",
                 borderRadius: "8px",
                 fontSize: "16px",
@@ -1285,6 +1604,7 @@ export default function LandingPage() {
                 fontFamily: "system-ui",
                 fontWeight: 700,
                 display: "inline-block",
+                transition: "opacity 0.2s",
               }}
             >
               Start for free
@@ -1314,7 +1634,7 @@ export default function LandingPage() {
       <footer
         style={{
           padding: "40px 48px",
-          background: "#1a1208",
+          background: "#0f0a05",
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
@@ -1327,7 +1647,7 @@ export default function LandingPage() {
             style={{
               width: "24px",
               height: "24px",
-              background: "#800000",
+              background: `linear-gradient(135deg, ${MAROON}, ${PURPLE})`,
               borderRadius: "4px",
               display: "flex",
               alignItems: "center",
@@ -1340,19 +1660,28 @@ export default function LandingPage() {
           </div>
           <span
             style={{
-              color: "rgba(255,255,255,0.5)",
+              color: "rgba(255,255,255,0.4)",
               fontSize: "14px",
               fontFamily: "system-ui",
             }}
           >
             ThinkTrace © 2026
           </span>
+          <span
+            style={{
+              color: "rgba(255,255,255,0.2)",
+              fontSize: "12px",
+              fontFamily: "system-ui",
+            }}
+          >
+            · Built at UChicago & Northwestern
+          </span>
         </div>
         <div style={{ display: "flex", gap: "24px" }}>
           <Link
             href="/login"
             style={{
-              color: "rgba(255,255,255,0.4)",
+              color: "rgba(255,255,255,0.3)",
               fontSize: "13px",
               textDecoration: "none",
               fontFamily: "system-ui",
@@ -1363,7 +1692,7 @@ export default function LandingPage() {
           <Link
             href="/signup"
             style={{
-              color: "rgba(255,255,255,0.4)",
+              color: "rgba(255,255,255,0.3)",
               fontSize: "13px",
               textDecoration: "none",
               fontFamily: "system-ui",
