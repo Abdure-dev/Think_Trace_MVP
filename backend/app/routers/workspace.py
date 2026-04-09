@@ -730,3 +730,43 @@ overall_score is 1-10 based on depth, genuine engagement, and quality of reasoni
     }).eq("id", problem_id).execute()
 
     return summary
+def parse_problems_from_response(text: str) -> list[dict]:
+    text = re.sub(r'```json\s*', '', text)
+    text = re.sub(r'```\s*', '', text)
+    text = text.strip()
+
+    start = text.find('[')
+    end = text.rfind(']') + 1
+    if start == -1 or end == 0:
+        return []
+
+    json_text = text[start:end]
+
+    # Fix invalid single backslash escapes that Gemini produces
+    # Replace \f \s \T etc (invalid JSON escapes) with double backslash
+    json_text = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', json_text)
+
+    try:
+        problems = json.loads(json_text)
+    except json.JSONDecodeError:
+        # Second attempt: more aggressive cleaning
+        json_text = json_text.replace('\\"', '"').replace('\\n', ' ').replace('\\t', ' ')
+        json_text = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', json_text)
+        try:
+            problems = json.loads(json_text)
+        except json.JSONDecodeError as e:
+            print(f"JSON parse failed after cleaning: {e}")
+            return []
+
+    if not isinstance(problems, list) or len(problems) == 0:
+        return []
+
+    valid = []
+    for i, p in enumerate(problems):
+        if isinstance(p, dict):
+            valid.append({
+                "problem_number": p.get("problem_number", i + 1),
+                "main_text": p.get("main_text", p.get("description", p.get("text", ""))),
+                "parts": p.get("parts", [])
+            })
+    return valid
