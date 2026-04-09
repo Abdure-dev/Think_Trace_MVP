@@ -21,64 +21,48 @@ MODELS = [
 
 LATEX_RULES = """LATEX CONVERSION RULES — apply every single one:
 
-GREEK LETTERS: α→$\\alpha$, β→$\\beta$, γ→$\\gamma$, δ→$\\delta$, ε→$\\epsilon$, ζ→$\\zeta$, η→$\\eta$, θ→$\\theta$, λ→$\\lambda$, μ→$\\mu$, ν→$\\nu$, π→$\\pi$, ρ→$\\rho$, σ→$\\sigma$, τ→$\\tau$, φ→$\\phi$, χ→$\\chi$, ψ→$\\psi$, ω→$\\omega$, Γ→$\\Gamma$, Δ→$\\Delta$, Θ→$\\Theta$, Λ→$\\Lambda$, Π→$\\Pi$, Σ→$\\Sigma$, Φ→$\\Phi$, Ψ→$\\Psi$, Ω→$\\Omega$
+GREEK LETTERS: α→$\\alpha$, β→$\\beta$, γ→$\\gamma$, δ→$\\delta$, ε→$\\epsilon$, θ→$\\theta$, λ→$\\lambda$, μ→$\\mu$, π→$\\pi$, σ→$\\sigma$, φ→$\\phi$, ω→$\\omega$, Γ→$\\Gamma$, Δ→$\\Delta$, Θ→$\\Theta$, Λ→$\\Lambda$, Σ→$\\Sigma$, Ω→$\\Omega$
 
-SUPERSCRIPTS AND SUBSCRIPTS: n²→$n^2$, n³→$n^3$, x^n→$x^n$, a_i→$a_i$, x_{ij}→$x_{ij}$, A^T→$A^T$, A^{-1}→$A^{-1}$
+SUPERSCRIPTS/SUBSCRIPTS: n²→$n^2$, n³→$n^3$, A^T→$A^T$, A^{-1}→$A^{-1}$, a_i→$a_i$, x_{ij}→$x_{ij}$
 
-FRACTIONS: a/b in math context→$\\frac{a}{b}$, 1/2→$\\frac{1}{2}$, n/2→$\\frac{n}{2}$
+FRACTIONS: 1/2→$\\frac{1}{2}$, n/2→$\\frac{n}{2}$, a/b in math→$\\frac{a}{b}$
 
 ROOTS: √n→$\\sqrt{n}$, √(a+b)→$\\sqrt{a+b}$, ∛n→$\\sqrt[3]{n}$
 
-SUMMATION AND PRODUCTS: ∑→$\\sum_{i=1}^{n}$, ∏→$\\prod_{i=1}^{n}$, ∫→$\\int$, ∫_a^b→$\\int_a^b$
+SUMMATION: ∑→$\\sum_{i=1}^{n}$, ∏→$\\prod_{i=1}^{n}$, ∫→$\\int$
 
-SET NOTATION: ∈→$\\in$, ∉→$\\notin$, ⊆→$\\subseteq$, ⊂→$\\subset$, ⊇→$\\supseteq$, ∪→$\\cup$, ∩→$\\cap$, ∅→$\\emptyset$, ℝ→$\\mathbb{R}$, ℤ→$\\mathbb{Z}$, ℕ→$\\mathbb{N}$, ℚ→$\\mathbb{Q}$, ℂ→$\\mathbb{C}$
+SET NOTATION: ∈→$\\in$, ∉→$\\notin$, ⊆→$\\subseteq$, ⊂→$\\subset$, ∪→$\\cup$, ∩→$\\cap$, ∅→$\\emptyset$, ℝ→$\\mathbb{R}$, ℤ→$\\mathbb{Z}$, ℕ→$\\mathbb{N}$, ℚ→$\\mathbb{Q}$, ℂ→$\\mathbb{C}$
 
-LOGIC: ∀→$\\forall$, ∃→$\\exists$, ¬→$\\neg$, ∧→$\\land$, ∨→$\\lor$, →→$\\rightarrow$, ↔→$\\leftrightarrow$, ⟹→$\\Rightarrow$, ⟺→$\\Leftrightarrow$
+LOGIC: ∀→$\\forall$, ∃→$\\exists$, ¬→$\\neg$, ∧→$\\land$, ∨→$\\lor$, ⟹→$\\Rightarrow$, ⟺→$\\Leftrightarrow$
 
-RELATIONS: ≤→$\\leq$, ≥→$\\geq$, ≠→$\\neq$, ≈→$\\approx$, ≡→$\\equiv$, ∝→$\\propto$, ≪→$\\ll$, ≫→$\\gg$
+RELATIONS: ≤→$\\leq$, ≥→$\\geq$, ≠→$\\neq$, ≈→$\\approx$, ≡→$\\equiv$
 
-ARROWS: →→$\\to$, ←→$\\leftarrow$, ↑→$\\uparrow$, ↓→$\\downarrow$, ↦→$\\mapsto$
+ARROWS: →→$\\to$, ←→$\\leftarrow$, ↦→$\\mapsto$
 
 MATRICES AND VECTORS:
-- Column vector: write as $\\begin{pmatrix} a \\\\ b \\\\ c \\end{pmatrix}$
-- Row vector: write as $\\begin{pmatrix} a & b & c \\end{pmatrix}$
-- Matrix: write as $\\begin{pmatrix} a & b \\\\ c & d \\end{pmatrix}$ or $\\begin{bmatrix} a & b \\\\ c & d \\end{bmatrix}$
-- Determinant: $\\det(A)$ or $|A|$
-- Transpose: $A^T$
-- Inverse: $A^{-1}$
-- Norm: $\\|v\\|$ or $\\|v\\|_2$
-- Dot product: $u \\cdot v$
-- Cross product: $u \\times v$
+- Column vector: $\\begin{pmatrix} a \\\\ b \\\\ c \\end{pmatrix}$
+- Row vector: $\\begin{pmatrix} a & b & c \\end{pmatrix}$
+- Matrix: $\\begin{pmatrix} a & b \\\\ c & d \\end{pmatrix}$ or $\\begin{bmatrix} a & b \\\\ c & d \\end{bmatrix}$
+- Augmented matrix: $\\left[\\begin{array}{cc|c} a & b & c \\\\ d & e & f \\end{array}\\right]$
+- Determinant: $\\det(A)$, Transpose: $A^T$, Inverse: $A^{-1}$
+- Norm: $\\|v\\|$, Dot product: $u \\cdot v$, Cross product: $u \\times v$
 - Bold vectors: $\\mathbf{v}$ or $\\vec{v}$
 
 LINEAR ALGEBRA:
-- Span: $\\text{span}\\{v_1, v_2\\}$
-- Rank: $\\text{rank}(A)$
-- Null space: $\\text{null}(A)$ or $\\ker(A)$
-- Column space: $\\text{col}(A)$
-- Row space: $\\text{row}(A)$
-- Eigenvalue equation: $Av = \\lambda v$
-- Characteristic polynomial: $\\det(A - \\lambda I)$
-- Inner product: $\\langle u, v \\rangle$
-- Orthogonal: $u \\perp v$
-- Linear transformation: $T: \\mathbb{R}^n \\to \\mathbb{R}^m$
+- Span: $\\text{span}\\{v_1, v_2\\}$, Rank: $\\text{rank}(A)$, Null space: $\\ker(A)$
+- Eigenvalue: $Av = \\lambda v$, Characteristic polynomial: $\\det(A - \\lambda I)$
+- Inner product: $\\langle u, v \\rangle$, Orthogonal: $u \\perp v$
+- Linear map: $T: \\mathbb{R}^n \\to \\mathbb{R}^m$, Projection: $\\text{proj}_u v$
 
-CALCULUS:
-- Derivative: $\\frac{d}{dx}$, $f'(x)$, $\\frac{df}{dx}$
-- Partial derivative: $\\frac{\\partial f}{\\partial x}$
-- Gradient: $\\nabla f$
-- Laplacian: $\\nabla^2 f$
-- Limit: $\\lim_{x \\to a}$
-- Infinity: ∞→$\\infty$
+CALCULUS: $\\frac{d}{dx}$, $\\frac{\\partial f}{\\partial x}$, $\\nabla f$, $\\lim_{x \\to a}$, ∞→$\\infty$
 
-COMPLEXITY AND FUNCTIONS:
-- Big-O: O(n)→$O(n)$, Ω(n)→$\\Omega(n)$, Θ(n)→$\\Theta(n)$
-- Floor/ceiling: ⌊x⌋→$\\lfloor x \\rfloor$, ⌈x⌉→$\\lceil x \\rceil$
-- Absolute value: |x|→$|x|$ or $\\lvert x \\rvert$
-- Log: log_b(n)→$\\log_b n$, ln→$\\ln$
+COMPLEXITY: O(n)→$O(n)$, Ω(n)→$\\Omega(n)$, Θ(n)→$\\Theta(n)$
+FLOOR/CEIL: ⌊x⌋→$\\lfloor x \\rfloor$, ⌈x⌉→$\\lceil x \\rceil$
+LOG: log_b(n)→$\\log_b n$, ln→$\\ln$
+COMBINATIONS: C(n,k)→$\\binom{n}{k}$
 
-DISPLAY MATH: Any standalone equation on its own line should use $$...$$
-INLINE MATH: Any math within a sentence should use $...$"""
+DISPLAY MATH: Standalone equations use $$...$$
+INLINE MATH: Math within sentences uses $...$"""
 
 
 def call_gemini(contents, retries=3):
@@ -103,41 +87,75 @@ def call_gemini(contents, retries=3):
     )
 
 
-def extract_problems_structured(raw_text: str) -> list[dict]:
-    prompt = f"""You are extracting problems from academic content. Your ONLY job is to identify and cleanly separate EACH individual problem.
+def preprocess_and_split(raw_text: str) -> str:
+    """Pre-process raw text to insert clear separators before each problem."""
+    # Remove everything before the first problem marker
+    cleaned = re.sub(
+        r'^.*?(?=PROBLEM\s+\d|Problem\s+\d+\.?|\bQ\d+\b|\bQuestion\s+\d)',
+        '',
+        raw_text,
+        count=1,
+        flags=re.DOTALL | re.IGNORECASE
+    )
+    if not cleaned.strip():
+        cleaned = raw_text  # fallback to original
 
-CRITICAL RULES — READ CAREFULLY:
-1. Every distinct problem/question MUST be its own SEPARATE entry in the JSON array
-2. If you see "Problem 1", "Problem 2", "1.", "2.", "Question 1" etc — each one is a SEPARATE entry
-3. NEVER merge multiple problems into one entry — this is the most important rule
-4. Sub-parts like (a), (b), (c) belong in the "parts" array of their parent problem
-5. If there are 4 problems in the text, return exactly 4 entries. If there are 10, return exactly 10.
-6. Count the problems carefully before writing the JSON
+    # Insert clear separators before each problem marker
+    cleaned = re.sub(
+        r'(PROBLEM\s+\d+|Problem\s+\d+\.?|Question\s+\d+\.?|Q\d+\.)',
+        r'\n\n===PROBLEM_SEPARATOR===\n\1',
+        cleaned,
+        flags=re.IGNORECASE
+    )
+
+    # Also handle simple numbered patterns like "1." or "1)" at start of line
+    cleaned = re.sub(
+        r'(?m)^(\d+[\.\)]\s+[A-Z])',
+        r'\n===PROBLEM_SEPARATOR===\n\1',
+        cleaned
+    )
+
+    return cleaned
+
+
+def extract_problems_structured(raw_text: str) -> list[dict]:
+    cleaned = preprocess_and_split(raw_text)
+
+    prompt = f"""You are extracting problems from academic content.
+
+The text below has been pre-processed. Each section starting with "===PROBLEM_SEPARATOR===" is a SEPARATE individual problem.
+
+CRITICAL RULES:
+1. Each "===PROBLEM_SEPARATOR===" marks exactly ONE new separate problem — never merge them
+2. Skip any course header, instructions, grading policy, or administrative text before the first separator
+3. Sub-parts (a), (b), (c) go in the "parts" array of their parent problem
+4. Count the separators to know exactly how many problems there are
+5. If there are 4 separators, return exactly 4 entries
 
 {LATEX_RULES}
 
-Return ONLY a valid JSON array, no markdown, no backticks, nothing else:
+Return ONLY a valid JSON array, no markdown, no backticks:
 [
   {{
     "problem_number": 1,
-    "main_text": "Full problem statement here WITHOUT sub-parts text",
+    "main_text": "Full problem statement WITHOUT sub-parts text",
     "parts": [
-      {{"label": "a", "text": "Full text of part a — include enough context to understand standalone"}},
-      {{"label": "b", "text": "Full text of part b — include enough context to understand standalone"}}
+      {{"label": "a", "text": "Full text of part a with enough context to understand standalone"}},
+      {{"label": "b", "text": "Full text of part b with enough context to understand standalone"}}
     ]
   }},
   {{
     "problem_number": 2,
-    "main_text": "This problem has no sub-parts — full text goes here",
+    "main_text": "Problem with no sub-parts — full text here",
     "parts": []
   }}
 ]
 
-Here is the content to extract from:
+Content:
 
-{raw_text}
+{cleaned}
 
-FINAL REMINDER: Count every numbered problem or question. Each one is a SEPARATE array entry. Return ONLY the JSON array."""
+REMINDER: Each ===PROBLEM_SEPARATOR=== is a new separate problem. Return ONLY the JSON array."""
 
     for attempt in range(3):
         try:
@@ -154,8 +172,7 @@ FINAL REMINDER: Count every numbered problem or question. Each one is a SEPARATE
                 time.sleep(2)
                 continue
 
-            json_text = text[start:end]
-            problems = json.loads(json_text)
+            problems = json.loads(text[start:end])
 
             if isinstance(problems, list) and len(problems) > 0:
                 valid = []
@@ -187,10 +204,11 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
         f"""Extract ALL text from this document exactly as it appears.
 
 CRITICAL STRUCTURE RULES:
-- Preserve ALL problem numbers exactly: "1.", "Problem 1", "Question 3" etc
+- Preserve ALL problem numbers exactly as they appear: "PROBLEM 1", "Problem 1", "1." etc
 - Keep a blank line between each problem so they are clearly separated
 - Preserve sub-parts (a), (b), (c) exactly under their parent problem
-- Do NOT summarize, skip, or merge any content
+- Do NOT skip, summarize, or merge any content
+- Include the full text of every problem including all sub-parts
 - Return raw extracted text only, no commentary
 
 {LATEX_RULES}"""
@@ -204,10 +222,10 @@ def extract_text_from_image(file_bytes: bytes, mime_type: str) -> str:
         f"""Extract ALL text from this image exactly as it appears.
 
 CRITICAL STRUCTURE RULES:
-- Preserve ALL problem numbers exactly: "1.", "Problem 1", "Question 3" etc
+- Preserve ALL problem numbers exactly as they appear
 - Keep a blank line between each problem
 - Preserve sub-parts (a), (b), (c) exactly under their parent problem
-- Do NOT summarize, skip, or merge any content
+- Do NOT skip, summarize, or merge any content
 - Return raw extracted text only, no commentary
 
 {LATEX_RULES}"""
