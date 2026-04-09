@@ -2,6 +2,8 @@ from fastapi import APIRouter, Security, HTTPException
 from app.database import client
 from app.dependencies import get_current_user
 from datetime import datetime
+import random
+import string
 
 router = APIRouter()
 
@@ -254,3 +256,74 @@ async def instructor_dashboard(course_id: str, current_user=Security(get_current
         raise HTTPException(status_code=403, detail="Not authorized")
     students = client.table("Student_Courses").select("*, Users(first_name, last_name)").eq("course_id", course_id).execute()
     return {"courses": course.data[0], "students": students.data}
+
+
+@router.get('/instructor/courses/{course_id}/code')
+async def get_course_code(course_id: str, current_user=Security(get_current_user)):
+    course = client.table("Courses").select("*").eq("id", course_id).eq("instructor_id", current_user["id"]).execute()
+    if not course.data:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    return {"course_code": course.data[0].get("course_code")}
+
+
+@router.post('/instructor/courses/{course_id}/invite')
+async def invite_students(course_id: str, body: dict, current_user=Security(get_current_user)):
+    course = client.table("Courses").select("*").eq("id", course_id).eq("instructor_id", current_user["id"]).execute()
+    if not course.data:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    emails = body.get("emails", [])
+    results = []
+
+    for email in emails:
+        email = email.strip().lower()
+        if not email:
+            continue
+
+        # Check if user exists
+        user = client.table("Users").select("id, first_name, last_name, email").eq("email", email).execute()
+
+        if user.data:
+            user_id = user.data[0]["id"]
+            # Check if already enrolled
+            existing = client.table("Student_Courses").select("id").eq("course_id", course_id).eq("student_id", user_id).execute()
+            if existing.data:
+                results.append({"email": email, "status": "already_enrolled", "name": f"{user.data[0]['first_name']} {user.data[0]['last_name']}"})
+            else:
+                client.table("Student_Courses").insert({
+                    "course_id": course_id,
+                    "student_id": user_id,
+                    "status": "Accepted"
+                }).execute()
+                results.append({"email": email, "status": "enrolled", "name": f"{user.data[0]['first_name']} {user.data[0]['last_name']}"})
+        else:
+            results.append({"email": email, "status": "not_found"})
+
+    return {"results": results}
+
+
+@router.post('/courses/join')
+async def join_course(body: dict, current_user=Security(get_current_user)):
+    code = body.get("code", "").strip().upper()
+    if not code:
+        raise HTTPException(status_code=400, detail="Course code required")
+
+    course = client.table("Courses").select("*").eq("course_code", code).execute()
+    if not course.data:
+        raise HTTPException(status_code=404, detail="Invalid course code")
+
+    course_id = course.data[0]["id"]
+    user_id = current_user["id"]
+
+    # Check already enrolled
+    existing = client.table("Student_Courses").select("id").eq("course_id", course_id).eq("student_id", user_id).execute()
+    if existing.data:
+        raise HTTPException(status_code=400, detail="Already enrolled in this course")
+
+    client.table("Student_Courses").insert({
+        "course_id": course_id,
+        "student_id": user_id,
+        "status": "Accepted"
+    }).execute()
+
+    return {"course": course.data[0], "message": "Successfully joined"}

@@ -19,7 +19,7 @@ export default function DashboardPage() {
   const [courses, setCourses] = useState<any[]>([]);
   const [workspaces, setWorkspaces] = useState<any[]>([]);
 
-  // Workspace modal state
+  // Workspace modal
   const [showModal, setShowModal] = useState(false);
   const [wsTitle, setWsTitle] = useState("");
   const [wsMode, setWsMode] = useState<"deep_focus" | "guided" | "open">(
@@ -33,6 +33,13 @@ export default function DashboardPage() {
   const [wsCreating, setWsCreating] = useState(false);
   const [wsError, setWsError] = useState("");
 
+  // Join course modal
+  const [showJoin, setShowJoin] = useState(false);
+  const [joinCode, setJoinCode] = useState("");
+  const [joining, setJoining] = useState(false);
+  const [joinError, setJoinError] = useState("");
+  const [joinSuccess, setJoinSuccess] = useState("");
+
   useEffect(() => {
     async function fetchData() {
       if (typeof window === "undefined") return;
@@ -43,7 +50,6 @@ export default function DashboardPage() {
       }
 
       const headers = { Authorization: `Bearer ${token}` };
-
       const [meRes, wsRes] = await Promise.all([
         fetch(`${process.env.NEXT_PUBLIC_API_URL}/me`, { headers }),
         fetch(`${process.env.NEXT_PUBLIC_API_URL}/workspaces`, { headers }),
@@ -112,6 +118,49 @@ export default function DashboardPage() {
     }
   }
 
+  async function handleJoinCourse() {
+    if (!joinCode.trim()) {
+      setJoinError("Enter a course code.");
+      return;
+    }
+    setJoining(true);
+    setJoinError("");
+    setJoinSuccess("");
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/courses/join`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ code: joinCode.trim().toUpperCase() }),
+        }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Failed to join.");
+      setJoinSuccess(`Successfully joined ${data.course.title}!`);
+      setJoinCode("");
+
+      // Refresh courses
+      const token2 = localStorage.getItem("token");
+      const coursesRes = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/courses`,
+        {
+          headers: { Authorization: `Bearer ${token2}` },
+        }
+      );
+      const coursesData = await coursesRes.json();
+      setCourses(Array.isArray(coursesData) ? coursesData : []);
+    } catch (err: any) {
+      setJoinError(err.message);
+    } finally {
+      setJoining(false);
+    }
+  }
+
   function closeModal() {
     setShowModal(false);
     setWsTitle("");
@@ -120,6 +169,13 @@ export default function DashboardPage() {
     setWsText("");
     setWsFile(null);
     setWsError("");
+  }
+
+  function closeJoin() {
+    setShowJoin(false);
+    setJoinCode("");
+    setJoinError("");
+    setJoinSuccess("");
   }
 
   return (
@@ -137,6 +193,7 @@ export default function DashboardPage() {
           </div>
           <span className="text-white font-bold text-lg">ThinkTrace</span>
         </div>
+
         <nav className="flex flex-col gap-2">
           <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-white bg-opacity-20 text-white font-medium">
             <span>Dashboard</span>
@@ -144,6 +201,14 @@ export default function DashboardPage() {
           <div className="flex items-center gap-3 px-4 py-3 rounded-xl text-red-200 hover:bg-white hover:bg-opacity-10 cursor-pointer transition">
             <span>Courses</span>
           </div>
+          {user?.role === "student" && (
+            <div
+              onClick={() => setShowJoin(true)}
+              className="flex items-center gap-3 px-4 py-3 rounded-xl text-red-200 hover:bg-white hover:bg-opacity-10 cursor-pointer transition"
+            >
+              <span>Join a Course</span>
+            </div>
+          )}
           <div
             onClick={() => setShowModal(true)}
             className="flex items-center gap-3 px-4 py-3 rounded-xl text-red-200 hover:bg-white hover:bg-opacity-10 cursor-pointer transition"
@@ -151,6 +216,7 @@ export default function DashboardPage() {
             <span>My Workspaces</span>
           </div>
         </nav>
+
         <div className="mt-auto">
           <div className="flex items-center gap-3 px-4 py-3 rounded-xl text-red-200">
             <div
@@ -276,12 +342,12 @@ export default function DashboardPage() {
 
           {courses.length === 0 ? (
             <div className="bg-white rounded-2xl p-10 border border-gray-100 text-center">
-              <p className="text-gray-400 text-sm mb-4">
+              <p className="text-gray-400 text-sm mb-6">
                 {user?.role === "instructor"
                   ? "No courses yet. Create your first course."
-                  : "No courses yet. Ask your instructor for a course code."}
+                  : "No courses yet. Enter a course code from your instructor to join."}
               </p>
-              {user?.role === "instructor" && (
+              {user?.role === "instructor" ? (
                 <Link href="/courses/create">
                   <button
                     className="px-5 py-2.5 rounded-xl text-white text-sm font-semibold hover:opacity-90 transition"
@@ -290,33 +356,53 @@ export default function DashboardPage() {
                     Create Course
                   </button>
                 </Link>
+              ) : (
+                <button
+                  onClick={() => setShowJoin(true)}
+                  className="px-6 py-3 rounded-xl font-semibold text-white transition hover:opacity-90"
+                  style={{ backgroundColor: "#800000" }}
+                >
+                  Join a Course
+                </button>
               )}
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-4">
-              {courses.map((item: any) => {
-                const isInstructor = user?.role === "instructor";
-                const id = isInstructor ? item.id : item.course_id;
-                const title = isInstructor ? item.title : item.Courses?.title;
-                const semester = isInstructor
-                  ? item.semester
-                  : item.Courses?.semester;
-                const href = isInstructor
-                  ? `/instructor/courses/${id}`
-                  : `/courses/${id}`;
-                return (
-                  <Link key={id} href={href}>
-                    <div className="bg-white rounded-2xl p-6 shadow-sm hover:shadow-md transition cursor-pointer border border-gray-100">
-                      <div
-                        className="w-10 h-10 rounded-xl mb-4"
-                        style={{ backgroundColor: "#f5e6e6" }}
-                      />
-                      <h3 className="font-bold text-gray-800">{title}</h3>
-                      <p className="text-gray-400 text-sm mt-1">{semester}</p>
-                    </div>
-                  </Link>
-                );
-              })}
+            <div>
+              <div className="grid grid-cols-2 gap-4">
+                {courses.map((item: any) => {
+                  const isInstructor = user?.role === "instructor";
+                  const id = isInstructor ? item.id : item.course_id;
+                  const title = isInstructor ? item.title : item.Courses?.title;
+                  const semester = isInstructor
+                    ? item.semester
+                    : item.Courses?.semester;
+                  const href = isInstructor
+                    ? `/instructor/courses/${id}`
+                    : `/courses/${id}`;
+                  return (
+                    <Link key={id} href={href}>
+                      <div className="bg-white rounded-2xl p-6 shadow-sm hover:shadow-md transition cursor-pointer border border-gray-100">
+                        <div
+                          className="w-10 h-10 rounded-xl mb-4"
+                          style={{ backgroundColor: "#f5e6e6" }}
+                        />
+                        <h3 className="font-bold text-gray-800">{title}</h3>
+                        <p className="text-gray-400 text-sm mt-1">{semester}</p>
+                      </div>
+                    </Link>
+                  );
+                })}
+              </div>
+              {/* Join another course button for students */}
+              {user?.role === "student" && (
+                <button
+                  onClick={() => setShowJoin(true)}
+                  className="mt-4 w-full py-3 rounded-xl border-2 border-dashed border-gray-200 text-sm font-medium hover:border-red-200 transition"
+                  style={{ color: "#800000" }}
+                >
+                  + Join another course
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -344,7 +430,6 @@ export default function DashboardPage() {
             </div>
 
             <div className="space-y-4">
-              {/* Title */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Title
@@ -358,7 +443,6 @@ export default function DashboardPage() {
                 />
               </div>
 
-              {/* Mode */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Mode
@@ -393,7 +477,6 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              {/* Source type */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Content
@@ -422,7 +505,6 @@ export default function DashboardPage() {
                     </button>
                   ))}
                 </div>
-
                 {wsSourceType === "text" && (
                   <textarea
                     value={wsText}
@@ -467,6 +549,79 @@ export default function DashboardPage() {
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Join Course Modal */}
+      {showJoin && (
+        <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center px-4">
+          <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl border border-gray-100 p-6">
+            <div className="flex items-start justify-between mb-6">
+              <div>
+                <h3 className="text-xl font-bold text-gray-800">
+                  Join a Course
+                </h3>
+                <p className="text-gray-400 text-sm mt-1">
+                  Enter the code from your instructor
+                </p>
+              </div>
+              <button
+                onClick={closeJoin}
+                className="text-gray-400 hover:text-gray-600 text-2xl"
+              >
+                ×
+              </button>
+            </div>
+
+            {joinSuccess ? (
+              <div className="text-center py-4">
+                <div className="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-3">
+                  <span className="text-green-600 text-xl">✓</span>
+                </div>
+                <p className="font-semibold text-gray-800">{joinSuccess}</p>
+                <button
+                  onClick={closeJoin}
+                  className="mt-4 px-5 py-2.5 rounded-xl text-white text-sm font-semibold hover:opacity-90 transition"
+                  style={{ backgroundColor: "#800000" }}
+                >
+                  Done
+                </button>
+              </div>
+            ) : (
+              <>
+                <input
+                  type="text"
+                  value={joinCode}
+                  onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+                  placeholder="A1B2C3"
+                  maxLength={6}
+                  className="w-full border border-gray-300 rounded-xl px-4 py-3 text-center text-2xl font-bold tracking-widest focus:outline-none focus:ring-2 focus:ring-[#800000] mb-3"
+                  style={{ color: "#800000", fontFamily: "monospace" }}
+                />
+                {joinError && (
+                  <p className="text-sm text-red-600 bg-red-50 px-4 py-2 rounded-lg mb-3">
+                    {joinError}
+                  </p>
+                )}
+                <div className="flex gap-3">
+                  <button
+                    onClick={closeJoin}
+                    className="flex-1 px-4 py-2.5 rounded-xl border border-gray-300 text-gray-700 hover:bg-gray-50 text-sm"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleJoinCourse}
+                    disabled={joining || joinCode.length !== 6}
+                    className="flex-1 px-4 py-2.5 rounded-xl text-white text-sm font-semibold hover:opacity-90 transition disabled:opacity-50"
+                    style={{ backgroundColor: "#800000" }}
+                  >
+                    {joining ? "Joining..." : "Join"}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
