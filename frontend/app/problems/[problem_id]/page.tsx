@@ -60,18 +60,39 @@ export default function ProblemWorkspacePage() {
   const params = useParams();
   const problem_id = params.problem_id as string;
 
-  const [stage, setStage] = useState("understand");
-  const [currentPartIndex, setCurrentPartIndex] = useState(0);
+  const [stage, setStage] = useState<string>(() => {
+    if (typeof window === "undefined") return "understand";
+    return localStorage.getItem(`stage_${problem_id}`) || "understand";
+  });
+
+  const [currentPartIndex, setCurrentPartIndex] = useState<number>(() => {
+    if (typeof window === "undefined") return 0;
+    return parseInt(localStorage.getItem(`part_${problem_id}`) || "0");
+  });
+
+  const [conversationHistory, setConversationHistory] = useState<
+    ConversationMessage[]
+  >(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const saved = localStorage.getItem(`trace_${problem_id}`);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [conversing, setConversing] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem(`conversing_${problem_id}`) === "true";
+  });
+
   const [studentInput, setStudentInput] = useState("");
   const [problem, setProblem] = useState<Problem | null>(null);
   const [understood, setUnderstood] = useState(false);
-  const [conversing, setConversing] = useState(false);
   const [aiResponse, setAiResponse] = useState("");
   const [timeLeft, setTimeLeft] = useState(0);
   const [timerDone, setTimerDone] = useState(false);
-  const [conversationHistory, setConversationHistory] = useState<
-    ConversationMessage[]
-  >([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [partComplete, setPartComplete] = useState(false);
@@ -108,6 +129,35 @@ export default function ProblemWorkspacePage() {
     !problem?.parts?.length || currentPartIndex >= problem.parts.length - 1;
   const isLastStage = currentIndex === stages.length - 1;
 
+  // Persist state to localStorage
+  useEffect(() => {
+    localStorage.setItem(`stage_${problem_id}`, stage);
+  }, [stage, problem_id]);
+
+  useEffect(() => {
+    localStorage.setItem(`part_${problem_id}`, String(currentPartIndex));
+  }, [currentPartIndex, problem_id]);
+
+  useEffect(() => {
+    if (conversationHistory.length > 0) {
+      localStorage.setItem(
+        `trace_${problem_id}`,
+        JSON.stringify(conversationHistory)
+      );
+    }
+  }, [conversationHistory, problem_id]);
+
+  useEffect(() => {
+    localStorage.setItem(`conversing_${problem_id}`, String(conversing));
+  }, [conversing, problem_id]);
+
+  function clearProblemStorage() {
+    localStorage.removeItem(`trace_${problem_id}`);
+    localStorage.removeItem(`stage_${problem_id}`);
+    localStorage.removeItem(`conversing_${problem_id}`);
+    localStorage.removeItem(`part_${problem_id}`);
+  }
+
   useEffect(() => {
     async function fetchProblem() {
       if (!problem_id) return;
@@ -131,7 +181,13 @@ export default function ProblemWorkspacePage() {
       const data = await res.json();
       setProblem(data);
 
-      if (data.sibling_traces && data.sibling_traces.length > 0) {
+      // Only seed from sibling traces if no saved history
+      const savedHistory = localStorage.getItem(`trace_${problem_id}`);
+      if (
+        !savedHistory &&
+        data.sibling_traces &&
+        data.sibling_traces.length > 0
+      ) {
         const seeded: ConversationMessage[] = [];
         for (const sibling of data.sibling_traces) {
           seeded.push({
@@ -182,10 +238,8 @@ export default function ProblemWorkspacePage() {
   async function handleSubmit() {
     const token = localStorage.getItem("token");
     if (!token || !problem || submitting) return;
-
     const inputToSend = conversing ? aiResponse : studentInput;
     if (!inputToSend.trim()) return;
-
     setSubmitting(true);
 
     fetch(`${process.env.NEXT_PUBLIC_API_URL}/problems/${problem_id}/traces`, {
@@ -265,6 +319,7 @@ export default function ProblemWorkspacePage() {
       setConversing(false);
       setPartComplete(false);
     } else {
+      clearProblemStorage();
       setAllPartsComplete(true);
     }
   }
@@ -280,13 +335,12 @@ export default function ProblemWorkspacePage() {
     });
   }
 
-  if (loading) {
+  if (loading)
     return (
       <div className="min-h-screen bg-[#f8f9fc] p-10 text-gray-500">
         Loading problem...
       </div>
     );
-  }
 
   if (allPartsComplete) {
     return (
@@ -299,8 +353,7 @@ export default function ProblemWorkspacePage() {
             Problem Complete!
           </h2>
           <p className="text-gray-400 mb-6">
-            You've worked through all {problem?.parts?.length} parts with full
-            reasoning traces.
+            You've worked through all parts with full reasoning traces.
           </p>
           <button
             onClick={() => router.back()}
@@ -331,7 +384,6 @@ export default function ProblemWorkspacePage() {
           <span className="text-white font-bold text-lg">ThinkTrace</span>
         </div>
 
-        {/* Parts progress */}
         {hasMultipleParts && (
           <div className="mb-6">
             <p className="text-blue-300 text-xs uppercase tracking-wide font-semibold mb-2">
@@ -398,7 +450,6 @@ export default function ProblemWorkspacePage() {
 
       {/* Main */}
       <div className="flex-1 p-10 overflow-y-auto">
-        {/* Sibling context banner */}
         {problem?.sibling_traces && problem.sibling_traces.length > 0 && (
           <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 mb-4">
             <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-1">
@@ -456,8 +507,8 @@ export default function ProblemWorkspacePage() {
               </p>
               <p className="text-green-600 text-sm mt-1">
                 {isLastPart
-                  ? "You've completed all parts of this problem."
-                  : `Ready to move to Part (${
+                  ? "You've completed all parts."
+                  : `Ready for Part (${
                       problem?.parts![currentPartIndex + 1]?.part_label
                     })`}
               </p>
@@ -500,7 +551,6 @@ export default function ProblemWorkspacePage() {
               </div>
             </div>
 
-            {/* Stage objective */}
             <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 mb-4">
               <p className="text-xs font-semibold text-blue-600 uppercase tracking-wide mb-1">
                 Objective
@@ -508,7 +558,6 @@ export default function ProblemWorkspacePage() {
               <p className="text-sm text-blue-800">{STAGE_OBJECTIVES[stage]}</p>
             </div>
 
-            {/* Initial input with math toolbar */}
             {!conversing && (
               <MathInput
                 value={studentInput}
@@ -518,7 +567,6 @@ export default function ProblemWorkspacePage() {
               />
             )}
 
-            {/* Conversation */}
             {currentStageMessages.length > 0 && (
               <div className="mt-4 flex flex-col gap-3">
                 {currentStageMessages.map((msg, index) => (
@@ -561,7 +609,6 @@ export default function ProblemWorkspacePage() {
               </div>
             )}
 
-            {/* AI response input with math toolbar */}
             {conversing && !understood && (
               <div className="mt-4">
                 <p className="text-sm font-medium text-purple-600 mb-2">

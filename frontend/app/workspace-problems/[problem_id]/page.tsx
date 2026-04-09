@@ -71,18 +71,39 @@ function WorkspaceProblemInner() {
     | "guided"
     | "open";
 
-  const [stage, setStage] = useState("understand");
-  const [currentPartIndex, setCurrentPartIndex] = useState(0);
+  const [stage, setStage] = useState<string>(() => {
+    if (typeof window === "undefined") return "understand";
+    return localStorage.getItem(`ws_stage_${problem_id}`) || "understand";
+  });
+
+  const [currentPartIndex, setCurrentPartIndex] = useState<number>(() => {
+    if (typeof window === "undefined") return 0;
+    return parseInt(localStorage.getItem(`ws_part_${problem_id}`) || "0");
+  });
+
+  const [conversationHistory, setConversationHistory] = useState<
+    ConversationMessage[]
+  >(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const saved = localStorage.getItem(`ws_trace_${problem_id}`);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [conversing, setConversing] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem(`ws_conversing_${problem_id}`) === "true";
+  });
+
   const [studentInput, setStudentInput] = useState("");
   const [problem, setProblem] = useState<Problem | null>(null);
   const [understood, setUnderstood] = useState(false);
-  const [conversing, setConversing] = useState(false);
   const [aiResponse, setAiResponse] = useState("");
   const [timeLeft, setTimeLeft] = useState(0);
   const [timerDone, setTimerDone] = useState(false);
-  const [conversationHistory, setConversationHistory] = useState<
-    ConversationMessage[]
-  >([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [partComplete, setPartComplete] = useState(false);
@@ -120,6 +141,35 @@ function WorkspaceProblemInner() {
     !problem?.parts?.length || currentPartIndex >= problem.parts.length - 1;
   const isLastStage = currentIndex === stages.length - 1;
 
+  // Persist state
+  useEffect(() => {
+    localStorage.setItem(`ws_stage_${problem_id}`, stage);
+  }, [stage, problem_id]);
+
+  useEffect(() => {
+    localStorage.setItem(`ws_part_${problem_id}`, String(currentPartIndex));
+  }, [currentPartIndex, problem_id]);
+
+  useEffect(() => {
+    if (conversationHistory.length > 0) {
+      localStorage.setItem(
+        `ws_trace_${problem_id}`,
+        JSON.stringify(conversationHistory)
+      );
+    }
+  }, [conversationHistory, problem_id]);
+
+  useEffect(() => {
+    localStorage.setItem(`ws_conversing_${problem_id}`, String(conversing));
+  }, [conversing, problem_id]);
+
+  function clearProblemStorage() {
+    localStorage.removeItem(`ws_trace_${problem_id}`);
+    localStorage.removeItem(`ws_stage_${problem_id}`);
+    localStorage.removeItem(`ws_conversing_${problem_id}`);
+    localStorage.removeItem(`ws_part_${problem_id}`);
+  }
+
   useEffect(() => {
     async function fetchProblem() {
       const token = localStorage.getItem("token");
@@ -142,7 +192,13 @@ function WorkspaceProblemInner() {
       const data = await res.json();
       setProblem(data);
 
-      if (data.sibling_traces && data.sibling_traces.length > 0) {
+      // Only seed from sibling traces if no saved history
+      const savedHistory = localStorage.getItem(`ws_trace_${problem_id}`);
+      if (
+        !savedHistory &&
+        data.sibling_traces &&
+        data.sibling_traces.length > 0
+      ) {
         const seeded: ConversationMessage[] = [];
         for (const sibling of data.sibling_traces) {
           seeded.push({
@@ -190,10 +246,8 @@ function WorkspaceProblemInner() {
   async function handleSubmit() {
     const token = localStorage.getItem("token");
     if (!token || !problem || submitting) return;
-
     const inputToSend = conversing ? aiResponse : studentInput;
     if (!inputToSend.trim()) return;
-
     setSubmitting(true);
 
     fetch(
@@ -277,6 +331,7 @@ function WorkspaceProblemInner() {
       setConversing(false);
       setPartComplete(false);
     } else {
+      clearProblemStorage();
       setAllPartsComplete(true);
     }
   }
@@ -310,8 +365,7 @@ function WorkspaceProblemInner() {
             Problem Complete!
           </h2>
           <p className="text-gray-400 mb-6">
-            You've worked through all {problem?.parts.length} parts with full
-            reasoning traces.
+            You've worked through all parts with full reasoning traces.
           </p>
           <button
             onClick={() => router.back()}
@@ -472,8 +526,8 @@ function WorkspaceProblemInner() {
               </p>
               <p className="text-green-600 text-sm mt-1">
                 {isLastPart
-                  ? "You've completed all parts of this problem."
-                  : `Ready to move to Part (${
+                  ? "You've completed all parts."
+                  : `Ready for Part (${
                       problem?.parts[currentPartIndex + 1]?.part_label
                     })`}
               </p>
