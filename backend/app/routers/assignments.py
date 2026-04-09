@@ -14,15 +14,18 @@ client_ai = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 
 def call_gemini(contents):
-    for model in ["models/gemini-2.5-flash", "models/gemini-2.0-flash", "models/gemini-1.5-flash"]:
+    for model in [
+        "gemini-2.5-flash",
+        "gemini-2.0-flash",
+        "gemini-1.5-flash",
+        "gemini-1.5-pro",
+    ]:
         try:
             return client_ai.models.generate_content(model=model, contents=contents)
         except Exception as e:
             print(f"Model {model} failed: {e}")
             continue
     raise HTTPException(status_code=503, detail="AI service temporarily unavailable. Please try again.")
-
-
 def extract_problems_structured(raw_text: str) -> list[dict]:
     prompt = f"""You are given academic content with LaTeX math expressions.
 Extract every distinct problem. For each problem, identify if it has sub-parts (a), (b), (c) etc.
