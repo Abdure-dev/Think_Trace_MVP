@@ -65,7 +65,6 @@ export default function CreateAssignmentPage({
       const formData = new FormData();
       formData.append("file", file);
 
-      // Simulate progress steps
       setLoadingStep("Uploading PDF...");
       setLoadingPct(15);
 
@@ -85,12 +84,10 @@ export default function CreateAssignmentPage({
 
       setLoadingStep("Converting math to LaTeX...");
       setLoadingPct(85);
-
       await new Promise((r) => setTimeout(r, 400));
 
       setLoadingStep("Done!");
       setLoadingPct(100);
-
       await new Promise((r) => setTimeout(r, 300));
 
       setProblems(data.problems);
@@ -122,6 +119,7 @@ export default function CreateAssignmentPage({
           body: JSON.stringify({
             title: problem.title,
             description: problem.description,
+            sub_parts: problem.sub_parts || [],
             due_date: dueDate,
             ai_level: aiLevel,
           }),
@@ -334,7 +332,8 @@ export default function CreateAssignmentPage({
                             {problem.sub_parts.map((part: any, pi: number) => (
                               <div
                                 key={pi}
-                                className="flex gap-2 pl-2 border-l-2 border-gray-100"
+                                className="flex gap-2 pl-3 border-l-2"
+                                style={{ borderColor: "#e5e7eb" }}
                               >
                                 <span className="text-xs font-bold text-gray-400 mt-0.5 flex-shrink-0">
                                   ({part.label})
