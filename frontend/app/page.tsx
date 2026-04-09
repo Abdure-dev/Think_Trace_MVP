@@ -20,7 +20,7 @@ const TIMERS = ["2:47", "3:51", "4:22", "7:14", "3:38", "2:55"];
 const OBJECTIVES = [
   "Restate the problem in your own words. Identify what is given, what you need to find, and any constraints. Do NOT solve yet.",
   "Identify the core concepts or theorems that apply. Explain WHY each one is relevant to this specific problem.",
-  "Write a numbered step-by-step plan before solving. Be specific — each step must be actionable.",
+  "Write a numbered step-by-step plan before solving. Be specific , each step must be actionable.",
   "Execute your plan step by step. Show ALL your work. Explain every step as you go.",
   "Examine your solution critically. What could go wrong? What edge cases exist?",
   "What did you learn? What is the key insight? How does this connect to what you already know?",
@@ -47,7 +47,7 @@ const CONVERSATIONS = [
     },
     {
       r: "ai",
-      t: "Which case of the Master Theorem applies here — and what is your reasoning for that choice?",
+      t: "Which case of the Master Theorem applies here , and what is your reasoning for that choice?",
     },
     {
       r: "student",
@@ -61,7 +61,7 @@ const CONVERSATIONS = [
     },
     {
       r: "ai",
-      t: "Clear plan. Before you execute — how will you verify which case applies without just pattern matching?",
+      t: "Clear plan. Before you execute , how will you verify which case applies without just pattern matching?",
     },
   ],
   [
@@ -162,7 +162,7 @@ export default function LandingPage() {
     const convos = CONVERSATIONS[demoStage];
     return (
       <div style={{ display: "flex", minHeight: "360px" }}>
-        {/* Sidebar — Northwestern Purple */}
+        {/* Sidebar , Northwestern Purple */}
         <div
           style={{
             width: "148px",
@@ -398,7 +398,7 @@ export default function LandingPage() {
             </div>
           </div>
 
-          {/* Progress bar — maroon to purple gradient */}
+          {/* Progress bar , maroon to purple gradient */}
           <div
             style={{
               height: "3px",
@@ -485,7 +485,7 @@ export default function LandingPage() {
                 fontFamily: "system-ui",
               }}
             >
-              CSCI 301 — Problem Set 3
+              CSCI 301 , Problem Set 3
             </div>
             <div
               style={{
@@ -1033,7 +1033,7 @@ export default function LandingPage() {
             }}
           >
             ThinkTrace won't do the work for you. It structures your thinking
-            through six rigorous stages — so you genuinely understand, not just
+            through six rigorous stages , so you genuinely understand, not just
             submit.
           </p>
 
@@ -1183,8 +1183,8 @@ export default function LandingPage() {
                 }}
               >
                 {demoView === "student"
-                  ? "ThinkTrace — Reasoning Workspace"
-                  : "ThinkTrace — Instructor Dashboard"}
+                  ? "ThinkTrace , Reasoning Workspace"
+                  : "ThinkTrace , Instructor Dashboard"}
               </span>
             </div>
             {demoView === "student" ? <StudentDemo /> : <InstructorDemo />}
@@ -1239,7 +1239,7 @@ export default function LandingPage() {
               }}
             >
               ThinkTrace won't write your essay or solve your problem set. It
-              will make sure you do — and that you actually understand what
+              will make sure you do , and that you actually understand what
               you're doing.
             </p>
           </div>
@@ -1264,25 +1264,25 @@ export default function LandingPage() {
               {
                 icon: "◎",
                 title: "AI that questions, not answers",
-                body: "ThinkTrace never gives you the solution. It asks five targeted Socratic questions per stage — pushing you to demonstrate genuine understanding before you move on.",
+                body: "ThinkTrace never gives you the solution. It asks five targeted Socratic questions per stage , pushing you to demonstrate genuine understanding before you move on.",
                 accent: PURPLE,
               },
               {
                 icon: "◈",
                 title: "Self-governance modes",
-                body: "Students set their own AI level — Deep Focus (no AI), Guided (Socratic only), or Open (collaborative). Your reasoning, your rules. Every interaction is still traced.",
+                body: "Students set their own AI level , Deep Focus (no AI), Guided (Socratic only), or Open (collaborative). Your reasoning, your rules. Every interaction is still traced.",
                 accent: MAROON,
               },
               {
                 icon: "⊞",
                 title: "Instructor governance",
-                body: "Instructors set AI intervention levels per course. Full visibility into every student's reasoning trace — not just the final answer, but every step of their thinking.",
+                body: "Instructors set AI intervention levels per course. Full visibility into every student's reasoning trace , not just the final answer, but every step of their thinking.",
                 accent: PURPLE,
               },
               {
                 icon: "⊡",
                 title: "PDF and image upload",
-                body: "Upload any assignment — PDF, image, or text. ThinkTrace extracts every problem and sub-part automatically, creating individual structured workspaces for each.",
+                body: "Upload any assignment , PDF, image, or text. ThinkTrace extracts every problem and sub-part automatically, creating individual structured workspaces for each.",
                 accent: MAROON,
               },
               {
@@ -1383,7 +1383,7 @@ export default function LandingPage() {
               {
                 num: "01",
                 title: "Upload or create a workspace",
-                body: "Instructors upload assignments — PDF, image, or text — and ThinkTrace extracts every problem automatically. Students can also create personal workspaces for any content they want to work through on their own terms.",
+                body: "Instructors upload assignments , PDF, image, or text , and ThinkTrace extracts every problem automatically. Students can also create personal workspaces for any content they want to work through on their own terms.",
                 color: MAROON,
               },
               {
@@ -1394,14 +1394,14 @@ export default function LandingPage() {
               },
               {
                 num: "03",
-                title: "AI guides — it never does the work",
+                title: "AI guides , it never does the work",
                 body: "The Socratic tutor asks five targeted questions per stage. It will redirect you if you skip ahead. It will push back if your reasoning is shallow. It will never give you the answer.",
                 color: MAROON,
               },
               {
                 num: "04",
                 title: "Everything is recorded",
-                body: "Students see their full reasoning arc across every stage. Instructors see every student's complete trace — timestamped, stage by stage, problem by problem. No hiding, no guessing, no shortcuts.",
+                body: "Students see their full reasoning arc across every stage. Instructors see every student's complete trace , timestamped, stage by stage, problem by problem. No hiding, no guessing, no shortcuts.",
                 color: PURPLE,
               },
             ].map((step, i) => (
@@ -1581,7 +1581,7 @@ export default function LandingPage() {
               fontFamily: "system-ui",
             }}
           >
-            ThinkTrace is for students who want to actually learn — and
+            ThinkTrace is for students who want to actually learn , and
             instructors who want to know they did.
           </p>
           <div
