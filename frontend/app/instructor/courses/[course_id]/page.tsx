@@ -40,9 +40,7 @@ export default function InstructorCoursePage() {
 
       const res = await fetch(
         `${process.env.NEXT_PUBLIC_API_URL}/instructor/courses/${course_id}`,
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        }
+        { headers: { Authorization: `Bearer ${token}` } }
       );
 
       if (!res.ok) {
@@ -133,16 +131,28 @@ export default function InstructorCoursePage() {
           ))}
         </div>
 
-        {/* Assignments */}
+        {/* Assignments header */}
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-xl font-bold text-gray-800">Assignments</h2>
+          <Link
+            href={`/instructor/courses/${course_id}/create-assignment`}
+            className="px-4 py-2 rounded-xl text-white text-sm font-semibold hover:opacity-90 transition"
+            style={{ backgroundColor: "#800000" }}
+          >
+            + New Assignment
+          </Link>
         </div>
 
         {assignments.length === 0 ? (
           <div className="bg-white rounded-2xl p-10 border border-gray-100 text-center">
-            <p className="text-gray-400">
-              No assignments yet. Create one from the course page.
-            </p>
+            <p className="text-gray-400 mb-6">No assignments yet.</p>
+            <Link
+              href={`/instructor/courses/${course_id}/create-assignment`}
+              className="px-6 py-3 rounded-xl text-white text-sm font-semibold hover:opacity-90 transition"
+              style={{ backgroundColor: "#800000" }}
+            >
+              Create First Assignment
+            </Link>
           </div>
         ) : (
           <div className="flex flex-col gap-3">
@@ -155,6 +165,7 @@ export default function InstructorCoursePage() {
                 a.total_students > 0
                   ? Math.round((a.students_started / a.total_students) * 100)
                   : 0;
+
               return (
                 <Link key={a.id} href={`/instructor/assignments/${a.id}`}>
                   <div className="bg-white rounded-2xl p-6 border border-gray-100 hover:shadow-md transition cursor-pointer">
@@ -180,24 +191,18 @@ export default function InstructorCoursePage() {
                     </div>
 
                     <div className="grid grid-cols-3 gap-4 mb-4">
-                      <div>
-                        <p className="text-2xl font-bold text-gray-800">
-                          {a.total_students}
-                        </p>
-                        <p className="text-xs text-gray-400">Enrolled</p>
-                      </div>
-                      <div>
-                        <p className="text-2xl font-bold text-gray-800">
-                          {a.students_started}
-                        </p>
-                        <p className="text-xs text-gray-400">Started</p>
-                      </div>
-                      <div>
-                        <p className="text-2xl font-bold text-gray-800">
-                          {a.students_completed}
-                        </p>
-                        <p className="text-xs text-gray-400">Completed</p>
-                      </div>
+                      {[
+                        { label: "Enrolled", value: a.total_students },
+                        { label: "Started", value: a.students_started },
+                        { label: "Completed", value: a.students_completed },
+                      ].map((s) => (
+                        <div key={s.label}>
+                          <p className="text-2xl font-bold text-gray-800">
+                            {s.value}
+                          </p>
+                          <p className="text-xs text-gray-400">{s.label}</p>
+                        </div>
+                      ))}
                     </div>
 
                     {/* Progress bar */}
@@ -218,7 +223,9 @@ export default function InstructorCoursePage() {
                             className="absolute inset-y-0 left-0 rounded-full"
                             style={{
                               width: `${
-                                pct > 0 ? (pct / startedPct) * 100 : 0
+                                pct > 0 && startedPct > 0
+                                  ? (pct / startedPct) * 100
+                                  : 0
                               }%`,
                               background: "#800000",
                             }}
