@@ -14,12 +14,13 @@ client_ai = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 
 def call_gemini(contents):
-    for model in ["models/gemini-2.5-flash", "models/gemini-2.0-flash"]:
+    for model in ["models/gemini-2.5-flash", "models/gemini-2.0-flash", "models/gemini-1.5-flash"]:
         try:
             return client_ai.models.generate_content(model=model, contents=contents)
-        except Exception:
+        except Exception as e:
+            print(f"Model {model} failed: {e}")
             continue
-    raise HTTPException(status_code=503, detail="AI service unavailable. Please try again.")
+    raise HTTPException(status_code=503, detail="AI service temporarily unavailable. Please try again.")
 
 
 def extract_problems_structured(raw_text: str) -> list[dict]:
@@ -405,25 +406,34 @@ async def workspace_ai_guidance(
     body: WorkspaceAIGuidanceRequest,
     current_user=Security(get_current_user)
 ):
+    # Build full history with stage labels — safely handle missing keys
     history_text = ""
     questions_asked_in_stage = 0
     for msg in body.conversation_history:
         role = msg.get("role", "student")
+        content = msg.get("content", "")
+        if not content:
+            continue
         if role == "system":
-            history_text += f"\n{msg.get('content', '')}"
+            history_text += f"\n{content}"
             continue
         role_label = "Student" if role == "student" else "ThinkTrace AI"
         stage_label = msg.get("stage", "unknown").upper()
-        history_text += f"\n[{stage_label}] {role_label}: {msg['content']}"
+        history_text += f"\n[{stage_label}] {role_label}: {content}"
         if role == "ai" and msg.get("stage") == body.stage:
             questions_asked_in_stage += 1
 
     prompt = build_ai_prompt(
-        body.mode, body.problem, body.stage,
-        body.student_input, history_text, questions_asked_in_stage
+        body.mode,
+        body.problem,
+        body.stage,
+        body.student_input,
+        history_text,
+        questions_asked_in_stage
     )
 
     response = call_gemini(prompt)
+
     text = response.text.strip()
     text = re.sub(r'```json\n?', '', text)
     text = re.sub(r'```\n?', '', text)
@@ -438,6 +448,7 @@ async def workspace_ai_guidance(
     else:
         parsed = {"message": "Keep working through this step.", "understood": False}
 
+    # Enforce 5 questions on backend
     questions_after = questions_asked_in_stage + 1
     if questions_after < STAGE_DEFINITIONS.get(body.stage, {}).get("questions", 5):
         parsed["understood"] = False
@@ -473,7 +484,6 @@ async def get_workspace_problem(problem_id: str, current_user=Security(get_curre
         raise HTTPException(status_code=404, detail="Problem not found")
 
     p = problem.data[0]
-
     parts = client.table("Workspace_Problem_Parts").select("*").eq("problem_id", problem_id).order("part_number").execute()
 
     siblings = client.table("Workspace_Problems") \

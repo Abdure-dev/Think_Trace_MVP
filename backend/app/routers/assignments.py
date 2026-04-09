@@ -14,12 +14,13 @@ client_ai = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 
 def call_gemini(contents):
-    for model in ["models/gemini-2.5-flash", "models/gemini-2.0-flash"]:
+    for model in ["models/gemini-2.5-flash", "models/gemini-2.0-flash", "models/gemini-1.5-flash"]:
         try:
             return client_ai.models.generate_content(model=model, contents=contents)
-        except Exception:
+        except Exception as e:
+            print(f"Model {model} failed: {e}")
             continue
-    raise HTTPException(status_code=503, detail="AI service unavailable. Please try again.")
+    raise HTTPException(status_code=503, detail="AI service temporarily unavailable. Please try again.")
 
 
 def extract_problems_structured(raw_text: str) -> list[dict]:
@@ -68,7 +69,6 @@ Content:
             return problems
     except json.JSONDecodeError:
         pass
-    # Fallback — treat as single problem
     return [{"problem_number": 1, "main_text": raw_text, "parts": []}]
 
 
@@ -323,8 +323,6 @@ async def create_assignment(
     }).execute()
 
     assignment_id = assignment.data[0]["id"]
-
-    # Extract structured problems with parts
     problems = extract_problems_structured(extracted_text)
 
     for prob in problems:
@@ -336,7 +334,6 @@ async def create_assignment(
 
         problem_id = problem_row.data[0]["id"]
 
-        # Insert parts if any
         if prob.get("parts"):
             part_rows = [
                 {
@@ -369,7 +366,6 @@ async def get_assignment(assignment_id: str, current_user=Security(get_current_u
 
     problems = client.table("Problems").select("*").eq("assignment_id", assignment_id).order("problem_number").execute()
 
-    # Fetch parts for each problem
     result_problems = []
     for p in problems.data:
         parts = client.table("Problem_Parts").select("*").eq("problem_id", p["id"]).order("part_number").execute()
@@ -390,25 +386,33 @@ async def get_problem_ai_guidance(
 
     problem_text = problem.data[0]["problem_text"]
 
+    # Build full history with stage labels — safely handle missing keys
     history_text = ""
     questions_asked_in_stage = 0
     for msg in body.conversation_history:
         role = msg.get("role", "student")
+        content = msg.get("content", "")
+        if not content:
+            continue
         if role == "system":
-            history_text += f"\n{msg.get('content', '')}"
+            history_text += f"\n{content}"
             continue
         role_label = "Student" if role == "student" else "ThinkTrace AI"
         stage_label = msg.get("stage", "unknown").upper()
-        history_text += f"\n[{stage_label}] {role_label}: {msg['content']}"
+        history_text += f"\n[{stage_label}] {role_label}: {content}"
         if role == "ai" and msg.get("stage") == body.stage:
             questions_asked_in_stage += 1
 
     prompt = build_ai_prompt(
-        problem_text, body.stage, body.student_input,
-        history_text, questions_asked_in_stage
+        problem_text,
+        body.stage,
+        body.student_input,
+        history_text,
+        questions_asked_in_stage
     )
 
     response = call_gemini(prompt)
+
     text = response.text.strip()
     text = re.sub(r'```json\n?', '', text)
     text = re.sub(r'```\n?', '', text)
@@ -429,6 +433,7 @@ async def get_problem_ai_guidance(
     else:
         parsed = {"message": "Could you explain your reasoning further?", "understood": False}
 
+    # Enforce 5 questions on backend
     questions_after = questions_asked_in_stage + 1
     if questions_after < STAGE_DEFINITIONS.get(body.stage, {}).get("questions", 5):
         parsed["understood"] = False
@@ -445,6 +450,65 @@ async def get_problem_ai_guidance(
     return parsed
 
 
+@router.post('/assignments/{assignment_id}/problems')
+async def add_problems(
+    assignment_id: str,
+    source_type: str = Form(...),
+    raw_text: str = Form(None),
+    file: UploadFile = File(None),
+    current_user=Security(get_current_user)
+):
+    if source_type not in ("pdf", "image", "text"):
+        raise HTTPException(status_code=400, detail="Invalid source_type")
+
+    extracted_text = ""
+    if source_type == "text":
+        if not raw_text:
+            raise HTTPException(status_code=400, detail="raw_text required")
+        extracted_text = raw_text
+    elif source_type == "pdf":
+        if not file:
+            raise HTTPException(status_code=400, detail="File required")
+        extracted_text = extract_text_from_pdf(await file.read())
+    elif source_type == "image":
+        if not file:
+            raise HTTPException(status_code=400, detail="File required")
+        extracted_text = extract_text_from_image(await file.read(), file.content_type)
+
+    existing = client.table("Problems") \
+        .select("problem_number") \
+        .eq("assignment_id", assignment_id) \
+        .order("problem_number", desc=True) \
+        .limit(1) \
+        .execute()
+
+    start_index = existing.data[0]["problem_number"] if existing.data else 0
+    problems = extract_problems_structured(extracted_text)
+
+    for i, prob in enumerate(problems):
+        problem_row = client.table("Problems").insert({
+            "assignment_id": assignment_id,
+            "problem_number": start_index + i + 1,
+            "problem_text": prob["main_text"],
+        }).execute()
+
+        problem_id = problem_row.data[0]["id"]
+
+        if prob.get("parts"):
+            part_rows = [
+                {
+                    "problem_id": problem_id,
+                    "part_label": p["label"],
+                    "part_text": p["text"],
+                    "part_number": j + 1,
+                }
+                for j, p in enumerate(prob["parts"])
+            ]
+            client.table("Problem_Parts").insert(part_rows).execute()
+
+    return {"added_count": len(problems)}
+
+
 @router.get('/problems/{problem_id}')
 async def get_problem(problem_id: str, current_user=Security(get_current_user)):
     problem = client.table("Problems").select("*").eq("id", problem_id).execute()
@@ -452,7 +516,6 @@ async def get_problem(problem_id: str, current_user=Security(get_current_user)):
         raise HTTPException(status_code=404, detail="Problem not found")
 
     p = problem.data[0]
-
     parts = client.table("Problem_Parts").select("*").eq("problem_id", problem_id).order("part_number").execute()
 
     siblings = client.table("Problems") \
