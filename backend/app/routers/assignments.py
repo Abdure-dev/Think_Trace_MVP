@@ -15,9 +15,32 @@ client_ai = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 MODELS = [
     "models/gemini-2.5-flash",
-    "models/gemini-2.0-flash",
-    "models/gemini-2.0-flash-lite",
+    "models/gemini-2.5-pro",
+    "models/gemini-3-flash-preview",
+    "models/gemini-3-pro-preview",
+    "models/gemini-flash-latest",
 ]
+
+def call_gemini(contents, retries=5):
+    for model in MODELS:
+        for attempt in range(retries):
+            try:
+                return client_ai.models.generate_content(model=model, contents=contents)
+            except Exception as e:
+                err = str(e)
+                print(f"Model {model} attempt {attempt + 1} failed: {err}")
+                if "503" in err or "UNAVAILABLE" in err or "overloaded" in err.lower():
+                    wait = min(2 ** attempt, 30)
+                    print(f"Retrying in {wait}s...")
+                    time.sleep(wait)
+                    continue
+                if "404" in err or "NOT_FOUND" in err:
+                    break
+                time.sleep(2)
+    raise HTTPException(
+        status_code=503,
+        detail="AI service temporarily unavailable. Please try again in a moment."
+    )
 
 LATEX_RULES = """LATEX CONVERSION RULES — apply every single one:
 
@@ -63,28 +86,6 @@ COMBINATIONS: C(n,k)→$\\binom{n}{k}$
 
 DISPLAY MATH: Standalone equations use $$...$$
 INLINE MATH: Math within sentences uses $...$"""
-
-
-def call_gemini(contents, retries=3):
-    for model in MODELS:
-        for attempt in range(retries):
-            try:
-                return client_ai.models.generate_content(model=model, contents=contents)
-            except Exception as e:
-                err = str(e)
-                print(f"Model {model} attempt {attempt + 1} failed: {err}")
-                if "503" in err or "UNAVAILABLE" in err or "overloaded" in err.lower():
-                    wait = 2 ** attempt
-                    print(f"Retrying in {wait}s...")
-                    time.sleep(wait)
-                    continue
-                if "404" in err or "NOT_FOUND" in err:
-                    break
-                time.sleep(1)
-    raise HTTPException(
-        status_code=503,
-        detail="AI service temporarily unavailable. Please try again in a moment."
-    )
 
 
 def parse_problems_from_response(text: str) -> list[dict]:

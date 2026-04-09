@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
@@ -35,6 +35,18 @@ const SUBJECTS = [
 const TERMS_QUARTER = ["Fall", "Winter", "Spring", "Summer"];
 const TERMS_SEMESTER = ["Fall", "Spring", "Summer"];
 const YEARS = [2023, 2024, 2025, 2026, 2027];
+
+const EXTRACTION_STEPS = [
+  { msg: "Uploading file to server...", pct: 8 },
+  { msg: "Reading document structure...", pct: 18 },
+  { msg: "Sending to Gemini AI...", pct: 30 },
+  { msg: "Identifying problems...", pct: 45 },
+  { msg: "Separating individual questions...", pct: 60 },
+  { msg: "Converting math to LaTeX...", pct: 75 },
+  { msg: "Processing sub-parts...", pct: 85 },
+  { msg: "Validating extraction...", pct: 93 },
+  { msg: "Almost done...", pct: 97 },
+];
 
 type Workspace = {
   id: string;
@@ -78,6 +90,12 @@ export default function DashboardPage() {
   const [wsCreating, setWsCreating] = useState(false);
   const [wsError, setWsError] = useState("");
 
+  // Extraction progress
+  const [extracting, setExtracting] = useState(false);
+  const [extractStep, setExtractStep] = useState("");
+  const [extractPct, setExtractPct] = useState(0);
+  const tickerRef = useRef<NodeJS.Timeout | null>(null);
+
   // Delete
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -118,6 +136,40 @@ export default function DashboardPage() {
     fetchData();
   }, []);
 
+  function startExtractionTicker() {
+    let stepIdx = 0;
+    let currentPct = 0;
+    setExtractPct(0);
+    setExtractStep(EXTRACTION_STEPS[0].msg);
+
+    tickerRef.current = setInterval(() => {
+      const step =
+        EXTRACTION_STEPS[Math.min(stepIdx, EXTRACTION_STEPS.length - 1)];
+      const target = step.pct;
+
+      if (currentPct < target - 1) {
+        currentPct += 1;
+        setExtractPct(currentPct);
+      } else if (stepIdx < EXTRACTION_STEPS.length - 1) {
+        stepIdx++;
+        setExtractStep(EXTRACTION_STEPS[stepIdx].msg);
+      }
+    }, 400);
+  }
+
+  function stopExtractionTicker(success: boolean, problemCount?: number) {
+    if (tickerRef.current) clearInterval(tickerRef.current);
+    if (success) {
+      setExtractStep(
+        `Done! Found ${problemCount} problem${problemCount !== 1 ? "s" : ""}`
+      );
+      setExtractPct(100);
+    } else {
+      setExtractStep("Extraction failed. Please try again.");
+      setExtractPct(0);
+    }
+  }
+
   async function handleCreateWorkspace() {
     if (!wsTitle.trim()) {
       setWsError("Title is required.");
@@ -131,8 +183,17 @@ export default function DashboardPage() {
       setWsError("Please upload a file.");
       return;
     }
+
     setWsCreating(true);
     setWsError("");
+
+    // Show extraction progress for PDF/image
+    if (wsSourceType === "pdf" || wsSourceType === "image") {
+      setShowModal(false);
+      setExtracting(true);
+      startExtractionTicker();
+    }
+
     try {
       const token = localStorage.getItem("token");
       const formData = new FormData();
@@ -145,19 +206,35 @@ export default function DashboardPage() {
       formData.append("term_type", wsTermType);
       if (wsTermName) formData.append("term_name", wsTermName);
       if (wsTermYear) formData.append("term_year", String(wsTermYear));
+
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/workspaces`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
         body: formData,
       });
+
       if (!res.ok) {
         const data = await res.json();
         throw new Error(data.detail || "Failed to create workspace.");
       }
+
       const data = await res.json();
+
+      if (wsSourceType === "pdf" || wsSourceType === "image") {
+        stopExtractionTicker(true, data.problem_count);
+        await new Promise((r) => setTimeout(r, 1200));
+        setExtracting(false);
+      }
+
       closeModal();
       router.push(`/workspaces/${data.workspace.id}`);
     } catch (err: any) {
+      if (wsSourceType === "pdf" || wsSourceType === "image") {
+        stopExtractionTicker(false);
+        await new Promise((r) => setTimeout(r, 1500));
+        setExtracting(false);
+        setShowModal(true);
+      }
       setWsError(err.message);
     } finally {
       setWsCreating(false);
@@ -287,6 +364,9 @@ export default function DashboardPage() {
         .ws-card { transition: all 0.2s; }
         .course-card:hover { box-shadow: 0 8px 32px rgba(128,0,0,0.08); transform: translateY(-1px); }
         .course-card { transition: all 0.2s; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
       `}</style>
 
       {/* Sidebar */}
@@ -446,7 +526,6 @@ export default function DashboardPage() {
 
       {/* Main */}
       <div className="flex-1 p-10 overflow-y-auto">
-        {/* Header */}
         <div className="mb-8">
           <h1
             style={{
@@ -767,9 +846,7 @@ export default function DashboardPage() {
                             cursor: "pointer",
                             fontSize: "14px",
                             color: "#9ca3af",
-                            display: "none",
                           }}
-                          className="delete-btn"
                           onMouseEnter={(e) => {
                             (e.target as HTMLElement).style.background =
                               "#fee2e2";
@@ -1015,6 +1092,193 @@ export default function DashboardPage() {
           )}
         </div>
       </div>
+
+      {/* Extraction Progress Overlay */}
+      {extracting && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.5)",
+            zIndex: 60,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "16px",
+          }}
+        >
+          <div
+            style={{
+              width: "100%",
+              maxWidth: "440px",
+              background: "white",
+              borderRadius: "20px",
+              padding: "36px",
+              boxShadow: "0 24px 64px rgba(78,42,132,0.2)",
+              animation: "fadeIn 0.3s ease",
+            }}
+          >
+            {/* Header */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "14px",
+                marginBottom: "28px",
+              }}
+            >
+              <div
+                style={{
+                  width: "44px",
+                  height: "44px",
+                  borderRadius: "12px",
+                  background: `${PURPLE}12`,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  flexShrink: 0,
+                }}
+              >
+                <div
+                  style={{
+                    width: "22px",
+                    height: "22px",
+                    borderRadius: "50%",
+                    border: `3px solid ${PURPLE}`,
+                    borderTopColor: "transparent",
+                    animation: "spin 0.8s linear infinite",
+                  }}
+                />
+              </div>
+              <div>
+                <h3
+                  style={{
+                    fontSize: "18px",
+                    fontWeight: 700,
+                    color: "#1a1208",
+                    margin: "0 0 3px",
+                    fontFamily: "Georgia, serif",
+                  }}
+                >
+                  Extracting Problems
+                </h3>
+                <p style={{ fontSize: "13px", color: "#8a7a6a", margin: 0 }}>
+                  ThinkTrace AI is reading your document
+                </p>
+              </div>
+            </div>
+
+            {/* Progress bar */}
+            <div style={{ marginBottom: "16px" }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  marginBottom: "8px",
+                }}
+              >
+                <span
+                  style={{
+                    fontSize: "13px",
+                    color: "#5a4a3a",
+                    fontWeight: 500,
+                  }}
+                >
+                  {extractStep}
+                </span>
+                <span
+                  style={{ fontSize: "13px", fontWeight: 700, color: PURPLE }}
+                >
+                  {extractPct}%
+                </span>
+              </div>
+              <div
+                style={{
+                  height: "6px",
+                  background: "#f0ece6",
+                  borderRadius: "3px",
+                  overflow: "hidden",
+                }}
+              >
+                <div
+                  style={{
+                    height: "100%",
+                    borderRadius: "3px",
+                    background: GRAD,
+                    width: `${extractPct}%`,
+                    transition: "width 0.4s ease",
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Step indicators */}
+            <div
+              style={{ display: "flex", flexDirection: "column", gap: "6px" }}
+            >
+              {EXTRACTION_STEPS.slice(0, 6).map((step, i) => {
+                const done = extractPct >= step.pct;
+                const active = extractStep === step.msg;
+                return (
+                  <div
+                    key={i}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "10px",
+                      opacity: done || active ? 1 : 0.35,
+                      transition: "opacity 0.3s",
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: "18px",
+                        height: "18px",
+                        borderRadius: "50%",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: "10px",
+                        fontWeight: 700,
+                        flexShrink: 0,
+                        background: done
+                          ? GRAD
+                          : active
+                          ? `${PURPLE}15`
+                          : "#f0ece6",
+                        color: done ? "white" : active ? PURPLE : "#8a7a6a",
+                      }}
+                    >
+                      {done ? "✓" : i + 1}
+                    </div>
+                    <span
+                      style={{
+                        fontSize: "12px",
+                        color: done ? "#1a1208" : active ? PURPLE : "#8a7a6a",
+                        fontWeight: active ? 600 : 400,
+                      }}
+                    >
+                      {step.msg}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+
+            <p
+              style={{
+                fontSize: "12px",
+                color: "#8a7a6a",
+                textAlign: "center",
+                marginTop: "20px",
+              }}
+            >
+              This may take 15-30 seconds for large PDFs
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Create Workspace Modal */}
       {showModal && (
@@ -1368,6 +1632,7 @@ export default function DashboardPage() {
                     </button>
                   ))}
                 </div>
+
                 {wsSourceType === "text" && (
                   <textarea
                     value={wsText}
@@ -1386,12 +1651,117 @@ export default function DashboardPage() {
                     }}
                   />
                 )}
-                {(wsSourceType === "pdf" || wsSourceType === "image") && (
+
+                {wsSourceType === "pdf" && (
+                  <div
+                    onClick={() =>
+                      document.getElementById("ws-pdf-input")?.click()
+                    }
+                    style={{
+                      border: "2px dashed #e5e0d8",
+                      borderRadius: "12px",
+                      padding: "24px",
+                      textAlign: "center",
+                      cursor: "pointer",
+                      transition: "border-color 0.2s",
+                    }}
+                    onMouseEnter={(e) =>
+                      (e.currentTarget.style.borderColor = PURPLE)
+                    }
+                    onMouseLeave={(e) =>
+                      (e.currentTarget.style.borderColor = "#e5e0d8")
+                    }
+                  >
+                    <input
+                      id="ws-pdf-input"
+                      type="file"
+                      accept="application/pdf"
+                      className="hidden"
+                      onChange={(e) => setWsFile(e.target.files?.[0] || null)}
+                      style={{ display: "none" }}
+                    />
+                    {wsFile ? (
+                      <div>
+                        <div
+                          style={{
+                            width: "36px",
+                            height: "36px",
+                            borderRadius: "8px",
+                            background: `${PURPLE}12`,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            margin: "0 auto 8px",
+                            fontSize: "18px",
+                          }}
+                        >
+                          📄
+                        </div>
+                        <p
+                          style={{
+                            fontWeight: 600,
+                            color: "#1a1208",
+                            fontSize: "14px",
+                            margin: "0 0 3px",
+                          }}
+                        >
+                          {wsFile.name}
+                        </p>
+                        <p
+                          style={{
+                            color: "#8a7a6a",
+                            fontSize: "12px",
+                            margin: 0,
+                          }}
+                        >
+                          {(wsFile.size / 1024).toFixed(0)} KB · Click to change
+                        </p>
+                      </div>
+                    ) : (
+                      <div>
+                        <div
+                          style={{
+                            width: "36px",
+                            height: "36px",
+                            borderRadius: "8px",
+                            background: "#f3f4f6",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            margin: "0 auto 8px",
+                            fontSize: "18px",
+                          }}
+                        >
+                          📎
+                        </div>
+                        <p
+                          style={{
+                            fontWeight: 600,
+                            color: "#374151",
+                            fontSize: "14px",
+                            margin: "0 0 3px",
+                          }}
+                        >
+                          Click to upload PDF
+                        </p>
+                        <p
+                          style={{
+                            color: "#8a7a6a",
+                            fontSize: "12px",
+                            margin: 0,
+                          }}
+                        >
+                          Assignment, problem set, or homework
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {wsSourceType === "image" && (
                   <input
                     type="file"
-                    accept={
-                      wsSourceType === "pdf" ? "application/pdf" : "image/*"
-                    }
+                    accept="image/*"
                     onChange={(e) => setWsFile(e.target.files?.[0] || null)}
                     style={{
                       width: "100%",
@@ -1403,6 +1773,31 @@ export default function DashboardPage() {
                     }}
                   />
                 )}
+
+                {(wsSourceType === "pdf" || wsSourceType === "image") &&
+                  wsFile && (
+                    <div
+                      style={{
+                        marginTop: "10px",
+                        background: `${PURPLE}06`,
+                        border: `1px solid ${PURPLE}20`,
+                        borderRadius: "8px",
+                        padding: "10px 12px",
+                      }}
+                    >
+                      <p
+                        style={{
+                          fontSize: "12px",
+                          color: PURPLE,
+                          margin: 0,
+                          fontWeight: 500,
+                        }}
+                      >
+                        ThinkTrace AI will read this file and extract each
+                        problem separately. This takes 15-30 seconds.
+                      </p>
+                    </div>
+                  )}
               </div>
 
               {wsError && (
@@ -1456,7 +1851,11 @@ export default function DashboardPage() {
                     opacity: wsCreating ? 0.5 : 1,
                   }}
                 >
-                  {wsCreating ? "Creating..." : "Create Workspace"}
+                  {wsCreating
+                    ? "Creating..."
+                    : wsSourceType === "pdf" || wsSourceType === "image"
+                    ? "Extract & Create →"
+                    : "Create Workspace"}
                 </button>
               </div>
             </div>
