@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Security, UploadFile, File, Form, HTTPException
-from app.dependencies import get_current_user, security
+from app.dependencies import get_current_user
 from app.database import client
+from app.schemas import WorkspaceAIGuidanceRequest
 from google import genai
 from google.genai import types
 from anthropic import Anthropic
@@ -8,7 +9,6 @@ import os
 import json
 import re
 import time
-from app.schemas import AIGuidanceRequest
 
 router = APIRouter()
 
@@ -35,7 +35,6 @@ MAX_MESSAGES_PER_STAGE = {
 
 
 def call_gemini_extraction(contents):
-    """Gemini only — used for PDF and image extraction."""
     for model in GEMINI_MODELS:
         for attempt in range(5):
             try:
@@ -55,7 +54,6 @@ def call_gemini_extraction(contents):
 
 
 def call_guidance(prompt: str) -> str:
-    """Try Gemini first, fall back to Claude Haiku on failure."""
     fast_models = [
         "models/gemini-2.5-flash",
         "models/gemini-2.5-pro",
@@ -80,7 +78,6 @@ def call_guidance(prompt: str) -> str:
                     break
                 time.sleep(1)
 
-    # Gemini failed — fall back to Claude Haiku
     print("Gemini unavailable — falling back to Claude Haiku")
     try:
         message = claude_client.messages.create(
@@ -91,14 +88,10 @@ def call_guidance(prompt: str) -> str:
         return message.content[0].text
     except Exception as e:
         print(f"Claude fallback failed: {e}")
-        raise HTTPException(
-            status_code=503,
-            detail="AI service temporarily unavailable. Please try again."
-        )
+        raise HTTPException(status_code=503, detail="AI service temporarily unavailable. Please try again.")
 
 
 def call_summary(prompt: str) -> str:
-    """Always use Claude Sonnet for summary generation."""
     try:
         message = claude_client.messages.create(
             model="claude-sonnet-4-6",
@@ -206,7 +199,7 @@ CRITICAL RULES:
 3. Each problem MUST be its own SEPARATE entry — NEVER merge multiple problems together
 4. Count the problems carefully — if you see PROBLEM 1, PROBLEM 2, PROBLEM 3, PROBLEM 4 return exactly 4 entries
 5. Sub-parts (a), (b), (c) go in the "parts" array of their parent problem
-6. Include ALL text within each problem including definitions, algorithms, or context for that specific problem
+6. Include ALL text within each problem including definitions, algorithms, or context given for that specific problem
 
 {LATEX_RULES}
 
@@ -264,6 +257,9 @@ def extract_and_structure_from_image(file_bytes: bytes, mime_type: str) -> list[
                 print(f"Extracted {len(problems)} problems from image")
                 return problems
             time.sleep(2)
+        except json.JSONDecodeError as e:
+            print(f"JSON error on attempt {attempt + 1}: {e}")
+            time.sleep(2)
         except Exception as e:
             print(f"Image extraction error on attempt {attempt + 1}: {e}")
             time.sleep(2)
@@ -277,6 +273,7 @@ CRITICAL RULES:
 1. Every distinct numbered problem MUST be its own SEPARATE entry
 2. NEVER merge multiple problems into one entry
 3. Sub-parts (a), (b), (c) go in the parts array
+4. Count problems carefully before writing JSON
 
 {LATEX_RULES}
 
@@ -311,17 +308,8 @@ Return ONLY the JSON array."""
 
 
 def build_history_text(conversation_history: list, current_stage: str) -> tuple[str, int]:
-    """
-    Smart history trimming:
-    - Keeps ALL student messages from current stage (most important)
-    - Keeps last 4 AI messages from current stage only (cuts verbose AI responses)
-    - Keeps ALL student messages from previous stages (context of what they covered)
-    - Drops all AI messages from previous stages (not needed)
-    This cuts tokens ~35% with almost zero quality loss.
-    """
     history_text = ""
     questions_asked_in_stage = 0
-
     current_stage_student_messages = []
     current_stage_ai_messages = []
     previous_stage_student_messages = []
@@ -344,22 +332,15 @@ def build_history_text(conversation_history: list, current_stage: str) -> tuple[
         else:
             if role == "student":
                 previous_stage_student_messages.append(msg)
-            # Drop all previous stage AI messages entirely
 
-    # Add previous stage student messages — compressed, no AI responses
     if previous_stage_student_messages:
         history_text += "\n--- What the student covered in previous stages ---"
         for msg in previous_stage_student_messages:
             stage_label = msg.get("stage", "unknown").upper()
             history_text += f"\n[{stage_label}] Student: {msg.get('content', '')}"
 
-    # Add ALL student messages from current stage
-    # Interleave with last 4 AI messages only
     if current_stage_student_messages or current_stage_ai_messages:
         history_text += f"\n--- Current stage: {current_stage.upper()} ---"
-
-        # Rebuild current stage conversation keeping all student messages
-        # but only last 4 AI responses
         current_stage_all = []
         for msg in conversation_history:
             role = msg.get("role", "student")
@@ -370,11 +351,8 @@ def build_history_text(conversation_history: list, current_stage: str) -> tuple[
             if stage == current_stage:
                 current_stage_all.append(msg)
 
-        # Find which AI messages to keep (last 4 only)
         ai_messages_in_order = [m for m in current_stage_all if m.get("role") == "ai"]
-        ai_messages_to_keep = set(
-            id(m) for m in ai_messages_in_order[-4:]
-        )
+        ai_messages_to_keep = set(id(m) for m in ai_messages_in_order[-4:])
 
         for msg in current_stage_all:
             role = msg.get("role", "student")
@@ -388,7 +366,6 @@ def build_history_text(conversation_history: list, current_stage: str) -> tuple[
 
 
 def parse_guidance_response(text: str) -> dict:
-    """Parse AI guidance response — handles both Gemini and Claude output."""
     text = text.strip()
     text = re.sub(r'```json\n?', '', text)
     text = re.sub(r'```\n?', '', text)
@@ -423,7 +400,7 @@ STAGE_DEFINITIONS = {
             "Student must identify any constraints or special conditions",
             "Student must NOT attempt to solve yet — this is comprehension only",
         ],
-        "unlock_when": "Student has restated the problem in their own words AND identified what is given AND identified what is asked AND noted at least one constraint. All components must be present — partial answers do not unlock this stage.",
+        "unlock_when": "Student has restated the problem in their own words AND identified what is given AND identified what is asked AND noted at least one constraint. All four components must be present — partial answers do not unlock this stage.",
         "questions": 4,
         "question_targets": [
             "Ask them to restate the problem in their own words",
@@ -462,7 +439,7 @@ STAGE_DEFINITIONS = {
             "Plan must cover the full solution from start to finish",
             "Vague plans like 'I will solve it step by step' do NOT unlock this stage",
         ],
-        "unlock_when": "Student has written a numbered plan with at least 3 specific actionable steps that logically cover the full solution. Vague one-liners do not unlock this stage.",
+        "unlock_when": "Student has written a numbered plan with at least 3 specific actionable steps that logically cover the full solution. Vague descriptions, one-step plans, and plans that just restate the problem do not unlock this stage.",
         "questions": 5,
         "question_targets": [
             "Ask them to write out their first step specifically",
@@ -484,7 +461,7 @@ STAGE_DEFINITIONS = {
             "Mistakes are allowed — genuine work with errors is better than no work",
             "Student must follow their plan from the previous stage",
         ],
-        "unlock_when": "Student has shown concrete step-by-step work with actual calculations, derivations, or logical steps written out in full. Vague answers, one-liners, questions back to the AI do NOT count.",
+        "unlock_when": "Student has shown concrete step-by-step work with actual calculations, derivations, or logical steps written out in full. Vague answers, one-liners, questions back to the AI, and acknowledgements do NOT count. The student must have actually executed something — not just described it.",
         "questions": 7,
         "question_targets": [
             "Ask them to write out their very first concrete step with actual work shown",
@@ -506,7 +483,7 @@ STAGE_DEFINITIONS = {
             "Student must NOT just say it looks correct — genuine critical thinking required",
             "Saying 'I think it is correct' or 'I cannot find any issues' does NOT unlock this stage",
         ],
-        "unlock_when": "Student has identified at least one specific weakness, assumption, or edge case. Generic statements like 'it looks correct' do not unlock this stage.",
+        "unlock_when": "Student has identified at least one specific weakness, assumption, or edge case in their solution. Generic statements like 'it looks correct' or 'I think it works' do not unlock this stage — they must name something specific that could fail or be improved.",
         "questions": 5,
         "question_targets": [
             "Ask what assumptions they made that might not always hold",
@@ -525,7 +502,7 @@ STAGE_DEFINITIONS = {
             "Student must NOT just summarize what they did — they must say what they LEARNED",
             "Student must be specific — 'I learned recursion' or 'I learned to think carefully' does not unlock this stage",
         ],
-        "unlock_when": "Student has articulated a specific insight beyond summarizing their steps — they must say what they now understand that they did not before.",
+        "unlock_when": "Student has articulated a specific insight that goes beyond summarizing their steps — they must say what they now understand that they did not before, or how this connects to a broader pattern. Vague statements like 'I learned to think step by step' do not unlock this stage.",
         "questions": 4,
         "question_targets": [
             "Ask what the single most important insight from this problem is",
@@ -537,12 +514,20 @@ STAGE_DEFINITIONS = {
 }
 
 
-def build_ai_prompt(problem: str, stage: str, student_input: str, history_text: str, questions_asked: int) -> str:
+def build_ai_prompt(mode: str, problem: str, stage: str, student_input: str, history_text: str, questions_asked: int) -> str:
     stage_info = STAGE_DEFINITIONS.get(stage, STAGE_DEFINITIONS["understand"])
     questions_remaining = max(0, stage_info["questions"] - questions_asked)
     next_question_target = stage_info["question_targets"][min(questions_asked, len(stage_info["question_targets"]) - 1)]
 
-    return f"""You are a Socratic tutor guiding a student through a structured academic reasoning process.
+    if mode == "deep_focus":
+        return f"""You are a strict academic coach. Deep focus mode — no AI assistance.
+Problem: {problem}
+Stage: {stage}
+Student input: {student_input}
+Respond ONLY with this JSON:
+{{"message": "Deep focus mode is active. Work through this independently.", "understood": false}}"""
+
+    base = f"""You are a Socratic tutor guiding a student through a structured academic reasoning process.
 
 PROBLEM: {problem}
 
@@ -557,6 +542,9 @@ STAGE RULES (enforce strictly):
 CONVERSATION HISTORY:
 {history_text if history_text else "(none)"}
 
+NOTE: Previous stage entries show only student messages. Current stage shows full conversation with last 4 AI responses.
+Count only YOUR messages in the current stage section to determine questions asked.
+
 STUDENT'S LATEST RESPONSE: {student_input}
 
 YOUR STATUS:
@@ -565,37 +553,49 @@ YOUR STATUS:
 - Your next question should target: {next_question_target}
 
 ABSOLUTE RULES — NEVER BREAK THESE:
-1. You MUST ask at least {stage_info["questions"]} questions before setting understood to true — this is a MINIMUM, not a maximum
-2. Even if the student gives a perfect answer, still ask all minimum questions
-3. After the minimum is reached, keep asking if the student has not genuinely demonstrated the stage objective
-4. Ask ONLY ONE question per response — never two at once
+1. You MUST ask at least {stage_info["questions"]} questions in this stage — this is a MINIMUM, not a maximum
+2. Even if the student gives a perfect answer on the first try, you still ask all {stage_info["questions"]} questions
+3. After the minimum is reached, keep asking until the student has GENUINELY demonstrated the stage objective
+4. Ask ONLY ONE question per response — never two questions at once
 5. Never give the answer or solve it for them
 6. If the student violates a stage rule redirect them firmly back to the stage objective
 7. If questions_remaining > 0 → understood MUST be false, no exceptions
 8. If questions_remaining = 0 AND student has genuinely demonstrated the unlock condition → understood = true
-9. If questions_remaining = 0 BUT student response is vague, incomplete, or a question → understood = false, keep asking
+9. If questions_remaining = 0 BUT student has NOT genuinely demonstrated the unlock condition → keep asking, understood = false
 10. Keep your message to 2-3 sentences maximum
-11. Briefly acknowledge what the student said then ask the next targeted question
+11. Briefly acknowledge what the student said then ask the next targeted question"""
+
+    suffix = f"""
 
 Respond ONLY with valid JSON:
 {{"message": "your response", "understood": false}}
 
-CRITICAL JSON FORMATTING: Double-escape LaTeX backslashes: \\\\frac not \\frac. Wrap ALL math in $ delimiters."""
+CRITICAL JSON FORMATTING: Double-escape LaTeX: \\\\frac not \\frac. Wrap ALL math in $ delimiters."""
+
+    if mode == "open":
+        return base + "\nIn open mode you can explain concepts and give examples but do not hand them the answer. Be warm and encouraging." + suffix
+    return base + suffix
 
 
 # ── Routes ───────────────────────────────────────────────────────────────────
 
-@router.post('/courses/{course_id}/assignments')
-async def create_assignment(
-    course_id: str,
+@router.post('/workspaces')
+async def create_workspace(
     title: str = Form(...),
+    mode: str = Form("guided"),
     source_type: str = Form(...),
     raw_text: str = Form(None),
     file: UploadFile = File(None),
+    subject: str = Form(None),
+    term_type: str = Form(None),
+    term_name: str = Form(None),
+    term_year: int = Form(None),
     current_user=Security(get_current_user)
 ):
+    if mode not in ("deep_focus", "guided", "open"):
+        raise HTTPException(status_code=400, detail="Invalid mode")
     if source_type not in ("pdf", "image", "text"):
-        raise HTTPException(status_code=400, detail="source_type must be pdf, image, or text")
+        raise HTTPException(status_code=400, detail="Invalid source_type")
 
     problems = []
 
@@ -612,19 +612,21 @@ async def create_assignment(
             raise HTTPException(status_code=400, detail="File required")
         problems = extract_and_structure_from_image(await file.read(), file.content_type or "image/jpeg")
 
-    assignment = client.table("Assignments").insert({
-        "course_id": course_id,
+    workspace = client.table("Personal_Workspaces").insert({
+        "user_id": current_user["id"],
         "title": title,
-        "uploaded_by": current_user["id"],
-        "source_type": source_type,
-        "raw_text": "",
+        "mode": mode,
+        "subject": subject,
+        "term_type": term_type,
+        "term_name": term_name,
+        "term_year": term_year,
     }).execute()
 
-    assignment_id = assignment.data[0]["id"]
+    workspace_id = workspace.data[0]["id"]
 
     for prob in problems:
-        problem_row = client.table("Problems").insert({
-            "assignment_id": assignment_id,
+        problem_row = client.table("Workspace_Problems").insert({
+            "workspace_id": workspace_id,
             "problem_number": prob["problem_number"],
             "problem_text": prob["main_text"],
         }).execute()
@@ -641,48 +643,55 @@ async def create_assignment(
                 }
                 for i, p in enumerate(prob["parts"])
             ]
-            client.table("Problem_Parts").insert(part_rows).execute()
+            client.table("Workspace_Problem_Parts").insert(part_rows).execute()
 
     return {
-        "assignment": assignment.data[0],
+        "workspace": workspace.data[0],
         "problem_count": len(problems)
     }
 
 
-@router.get('/courses/{course_id}/assignments')
-async def get_assignments(course_id: str, current_user=Security(get_current_user)):
-    assignments = client.table("Assignments").select("*").eq("course_id", course_id).execute()
-    return assignments.data
+@router.get('/workspaces')
+async def get_workspaces(current_user=Security(get_current_user)):
+    workspaces = client.table("Personal_Workspaces") \
+        .select("*") \
+        .eq("user_id", current_user["id"]) \
+        .order("created_at", desc=True) \
+        .execute()
+    return workspaces.data
 
 
-@router.get('/assignments/{assignment_id}')
-async def get_assignment(assignment_id: str, current_user=Security(get_current_user)):
-    assignment = client.table("Assignments").select("*").eq("id", assignment_id).execute()
-    if not assignment.data:
-        raise HTTPException(status_code=404, detail="Assignment not found")
+@router.get('/workspaces/{workspace_id}')
+async def get_workspace(workspace_id: str, current_user=Security(get_current_user)):
+    workspace = client.table("Personal_Workspaces") \
+        .select("*") \
+        .eq("id", workspace_id) \
+        .eq("user_id", current_user["id"]) \
+        .execute()
+    if not workspace.data:
+        raise HTTPException(status_code=404, detail="Workspace not found")
 
-    problems = client.table("Problems").select("*").eq("assignment_id", assignment_id).order("problem_number").execute()
+    problems = client.table("Workspace_Problems") \
+        .select("*") \
+        .eq("workspace_id", workspace_id) \
+        .order("problem_number") \
+        .execute()
 
     result_problems = []
     for p in problems.data:
-        parts = client.table("Problem_Parts").select("*").eq("problem_id", p["id"]).order("part_number").execute()
+        parts = client.table("Workspace_Problem_Parts").select("*").eq("problem_id", p["id"]).order("part_number").execute()
         result_problems.append({**p, "parts": parts.data})
 
-    return {**assignment.data[0], "problems": result_problems}
+    return {**workspace.data[0], "problems": result_problems}
 
 
-@router.post('/problems/{problem_id}/ai-guidance')
-async def get_problem_ai_guidance(
+@router.post('/workspaces/{workspace_id}/problems/{problem_id}/ai-guidance')
+async def workspace_ai_guidance(
+    workspace_id: str,
     problem_id: str,
-    body: AIGuidanceRequest,
+    body: WorkspaceAIGuidanceRequest,
     current_user=Security(get_current_user)
 ):
-    problem = client.table("Problems").select("*").eq("id", problem_id).execute()
-    if not problem.data:
-        raise HTTPException(status_code=404, detail="Problem not found")
-
-    problem_text = problem.data[0]["problem_text"]
-
     # Check message cap
     student_messages_in_stage = sum(
         1 for msg in body.conversation_history
@@ -695,13 +704,14 @@ async def get_problem_ai_guidance(
             "understood": True
         }
 
-    # Build trimmed history
+    # Build smart trimmed history
     history_text, questions_asked_in_stage = build_history_text(
         body.conversation_history, body.stage
     )
 
     prompt = build_ai_prompt(
-        problem_text,
+        body.mode,
+        body.problem,
         body.stage,
         body.student_input,
         history_text,
@@ -717,95 +727,49 @@ async def get_problem_ai_guidance(
     if questions_after < questions_needed:
         parsed["understood"] = False
 
-    client.table("AI_Interactions").insert({
-        "question": body.student_input,
-        "rewritten_prompt": prompt,
-        "response": parsed["message"],
-        "intervention_level": 2,
-        "allowed_mode": "socratic",
-        "ai_model": "gemini-2.5-flash"
-    }).execute()
-
     return parsed
 
 
-@router.post('/assignments/{assignment_id}/problems')
-async def add_problems(
-    assignment_id: str,
-    source_type: str = Form(...),
-    raw_text: str = Form(None),
-    file: UploadFile = File(None),
+@router.post('/workspace-problems/{problem_id}/traces')
+async def create_workspace_trace(
+    problem_id: str,
+    body: dict,
     current_user=Security(get_current_user)
 ):
-    if source_type not in ("pdf", "image", "text"):
-        raise HTTPException(status_code=400, detail="Invalid source_type")
+    problem = client.table("Workspace_Problems").select("id").eq("id", problem_id).execute()
+    if not problem.data:
+        raise HTTPException(status_code=404, detail="Problem not found")
 
-    problems = []
-    if source_type == "text":
-        if not raw_text:
-            raise HTTPException(status_code=400, detail="raw_text required")
-        problems = extract_problems_structured(raw_text)
-    elif source_type == "pdf":
-        if not file:
-            raise HTTPException(status_code=400, detail="File required")
-        problems = extract_and_structure_from_pdf(await file.read())
-    elif source_type == "image":
-        if not file:
-            raise HTTPException(status_code=400, detail="File required")
-        problems = extract_and_structure_from_image(await file.read(), file.content_type)
+    trace = client.table("Workspace_Traces").insert({
+        "problem_id": problem_id,
+        "user_id": current_user["id"],
+        "stage": body.get("stage"),
+        "action": body.get("action"),
+        "content": body.get("content"),
+    }).execute()
 
-    existing = client.table("Problems") \
-        .select("problem_number") \
-        .eq("assignment_id", assignment_id) \
-        .order("problem_number", desc=True) \
-        .limit(1) \
-        .execute()
-
-    start_index = existing.data[0]["problem_number"] if existing.data else 0
-
-    for i, prob in enumerate(problems):
-        problem_row = client.table("Problems").insert({
-            "assignment_id": assignment_id,
-            "problem_number": start_index + i + 1,
-            "problem_text": prob["main_text"],
-        }).execute()
-
-        problem_id = problem_row.data[0]["id"]
-
-        if prob.get("parts"):
-            part_rows = [
-                {
-                    "problem_id": problem_id,
-                    "part_label": p["label"],
-                    "part_text": p["text"],
-                    "part_number": j + 1,
-                }
-                for j, p in enumerate(prob["parts"])
-            ]
-            client.table("Problem_Parts").insert(part_rows).execute()
-
-    return {"added_count": len(problems)}
+    return trace.data[0]
 
 
-@router.get('/problems/{problem_id}')
-async def get_problem(problem_id: str, current_user=Security(get_current_user)):
-    problem = client.table("Problems").select("*").eq("id", problem_id).execute()
+@router.get('/workspace-problems/{problem_id}')
+async def get_workspace_problem(problem_id: str, current_user=Security(get_current_user)):
+    problem = client.table("Workspace_Problems").select("*").eq("id", problem_id).execute()
     if not problem.data:
         raise HTTPException(status_code=404, detail="Problem not found")
 
     p = problem.data[0]
-    parts = client.table("Problem_Parts").select("*").eq("problem_id", problem_id).order("part_number").execute()
+    parts = client.table("Workspace_Problem_Parts").select("*").eq("problem_id", problem_id).order("part_number").execute()
 
-    siblings = client.table("Problems") \
+    siblings = client.table("Workspace_Problems") \
         .select("id, problem_number, problem_text") \
-        .eq("assignment_id", p["assignment_id"]) \
+        .eq("workspace_id", p["workspace_id"]) \
         .order("problem_number") \
         .execute()
 
     sibling_ids = [s["id"] for s in siblings.data if s["problem_number"] < p["problem_number"]]
     sibling_traces = []
     for sid in sibling_ids:
-        traces = client.table("Traces") \
+        traces = client.table("Workspace_Traces") \
             .select("*") \
             .eq("problem_id", sid) \
             .eq("user_id", current_user["id"]) \
@@ -825,3 +789,91 @@ async def get_problem(problem_id: str, current_user=Security(get_current_user)):
         "siblings": siblings.data,
         "sibling_traces": sibling_traces
     }
+
+
+@router.delete('/workspaces/{workspace_id}')
+async def delete_workspace(workspace_id: str, current_user=Security(get_current_user)):
+    workspace = client.table("Personal_Workspaces").select("id").eq("id", workspace_id).eq("user_id", current_user["id"]).execute()
+    if not workspace.data:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
+    problems = client.table("Workspace_Problems").select("id").eq("workspace_id", workspace_id).execute()
+    for p in problems.data:
+        client.table("Workspace_Traces").delete().eq("problem_id", p["id"]).execute()
+        client.table("Workspace_Problem_Parts").delete().eq("problem_id", p["id"]).execute()
+    client.table("Workspace_Problems").delete().eq("workspace_id", workspace_id).execute()
+    client.table("Personal_Workspaces").delete().eq("id", workspace_id).execute()
+
+    return {"deleted": True}
+
+
+@router.post('/workspace-problems/{problem_id}/summary')
+async def generate_problem_summary(
+    problem_id: str,
+    body: dict,
+    current_user=Security(get_current_user)
+):
+    problem = client.table("Workspace_Problems").select("*").eq("id", problem_id).execute()
+    if not problem.data:
+        raise HTTPException(status_code=404, detail="Problem not found")
+
+    problem_text = problem.data[0]["problem_text"]
+    conversation_history = body.get("conversation_history", [])
+
+    history_text = ""
+    for msg in conversation_history:
+        role = msg.get("role", "")
+        content = msg.get("content", "")
+        stage = msg.get("stage", "")
+        if not content or role == "system":
+            continue
+        role_label = "Student" if role == "student" else "ThinkTrace AI"
+        history_text += f"\n[{stage.upper()}] {role_label}: {content}"
+
+    prompt = f"""You are an insightful academic coach reviewing a student's complete reasoning trace for a problem.
+
+PROBLEM: {problem_text}
+
+STUDENT'S FULL REASONING TRACE:
+{history_text}
+
+Generate a structured JSON summary of this student's reasoning journey. Be specific, insightful, and genuinely helpful. Reference what they actually wrote.
+
+Return ONLY valid JSON in this exact format:
+{{
+  "stage_insights": {{
+    "understand": "2-3 sentence insight about how well they understood the problem.",
+    "concept": "2-3 sentence insight about their conceptual reasoning.",
+    "plan": "2-3 sentence insight about their planning.",
+    "attempt": "2-3 sentence insight about their execution.",
+    "critique": "2-3 sentence insight about their critical thinking.",
+    "reflection": "2-3 sentence insight about their reflection."
+  }},
+  "key_insight": "The single most important thing this student demonstrated or learned. Be specific.",
+  "strongest_stage": "understand|concept|plan|attempt|critique|reflection",
+  "weakest_stage": "understand|concept|plan|attempt|critique|reflection",
+  "growth_note": "One specific actionable thing this student should focus on to improve.",
+  "overall_score": 7
+}}
+
+overall_score is 1-10 based on depth, genuine engagement, and quality of reasoning."""
+
+    raw = call_summary(prompt)
+    raw = re.sub(r'```json\n?', '', raw)
+    raw = re.sub(r'```\n?', '', raw)
+
+    match = re.search(r'\{.*\}', raw, re.DOTALL)
+    if match:
+        try:
+            summary = json.loads(match.group())
+        except json.JSONDecodeError:
+            summary = {"key_insight": "Unable to generate summary.", "stage_insights": {}, "overall_score": 0, "growth_note": "", "strongest_stage": "", "weakest_stage": ""}
+    else:
+        summary = {"key_insight": "Unable to generate summary.", "stage_insights": {}, "overall_score": 0, "growth_note": "", "strongest_stage": "", "weakest_stage": ""}
+
+    client.table("Workspace_Problems").update({
+        "ai_summary": json.dumps(summary),
+        "summary_generated_at": "now()",
+    }).eq("id", problem_id).execute()
+
+    return summary

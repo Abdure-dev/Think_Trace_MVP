@@ -344,6 +344,7 @@ def build_history_text(conversation_history: list, current_stage: str) -> tuple[
         else:
             if role == "student":
                 previous_stage_student_messages.append(msg)
+            # Drop all previous stage AI messages entirely
 
     # Add previous stage student messages — compressed, no AI responses
     if previous_stage_student_messages:
@@ -352,10 +353,13 @@ def build_history_text(conversation_history: list, current_stage: str) -> tuple[
             stage_label = msg.get("stage", "unknown").upper()
             history_text += f"\n[{stage_label}] Student: {msg.get('content', '')}"
 
-    # Add ALL student messages from current stage interleaved with last 4 AI messages
+    # Add ALL student messages from current stage
+    # Interleave with last 4 AI messages only
     if current_stage_student_messages or current_stage_ai_messages:
         history_text += f"\n--- Current stage: {current_stage.upper()} ---"
 
+        # Rebuild current stage conversation keeping all student messages
+        # but only last 4 AI responses
         current_stage_all = []
         for msg in conversation_history:
             role = msg.get("role", "student")
@@ -366,8 +370,11 @@ def build_history_text(conversation_history: list, current_stage: str) -> tuple[
             if stage == current_stage:
                 current_stage_all.append(msg)
 
+        # Find which AI messages to keep (last 4 only)
         ai_messages_in_order = [m for m in current_stage_all if m.get("role") == "ai"]
-        ai_messages_to_keep = set(id(m) for m in ai_messages_in_order[-4:])
+        ai_messages_to_keep = set(
+            id(m) for m in ai_messages_in_order[-4:]
+        )
 
         for msg in current_stage_all:
             role = msg.get("role", "student")
@@ -550,11 +557,6 @@ STAGE RULES (enforce strictly):
 CONVERSATION HISTORY:
 {history_text if history_text else "(none)"}
 
-NOTE: Messages labeled [STAGE] show which stage they came from.
-Previous stage entries show only student messages — AI responses from previous stages are omitted to save context.
-Current stage entries show full conversation — all student messages and last 4 AI responses.
-Count only YOUR messages in the current stage section to determine questions asked.
-
 STUDENT'S LATEST RESPONSE: {student_input}
 
 YOUR STATUS:
@@ -693,7 +695,7 @@ async def get_problem_ai_guidance(
             "understood": True
         }
 
-    # Build smart trimmed history
+    # Build trimmed history
     history_text, questions_asked_in_stage = build_history_text(
         body.conversation_history, body.stage
     )
