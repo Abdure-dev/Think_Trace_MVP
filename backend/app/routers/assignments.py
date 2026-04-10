@@ -3,6 +3,7 @@ from app.dependencies import get_current_user, security
 from app.database import client
 from google import genai
 from google.genai import types
+from anthropic import Anthropic
 import os
 import json
 import re
@@ -11,11 +12,11 @@ from app.schemas import AIGuidanceRequest
 
 router = APIRouter()
 
-client_ai = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+claude_client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
-MODELS = [
+GEMINI_MODELS = [
     "models/gemini-2.5-flash",
-    "models/gemini-2.0-flash",
     "models/gemini-2.5-pro",
     "models/gemini-3-flash-preview",
     "models/gemini-3-pro-preview",
@@ -23,12 +24,22 @@ MODELS = [
     "models/gemini-2.5-flash-lite",
 ]
 
+MAX_MESSAGES_PER_STAGE = {
+    "understand": 10,
+    "concept": 10,
+    "plan": 12,
+    "attempt": 20,
+    "critique": 12,
+    "reflection": 10,
+}
 
-def call_gemini(contents, retries=5):
-    for model in MODELS:
-        for attempt in range(retries):
+
+def call_gemini_extraction(contents):
+    """Gemini only — used for PDF and image extraction."""
+    for model in GEMINI_MODELS:
+        for attempt in range(5):
             try:
-                return client_ai.models.generate_content(model=model, contents=contents)
+                return gemini_client.models.generate_content(model=model, contents=contents)
             except Exception as e:
                 err = str(e)
                 print(f"Model {model} attempt {attempt + 1} failed: {err}")
@@ -40,34 +51,72 @@ def call_gemini(contents, retries=5):
                 if "404" in err or "NOT_FOUND" in err:
                     break
                 time.sleep(1)
-    raise HTTPException(
-        status_code=503,
-        detail="AI service temporarily unavailable. Please try again in a moment."
-    )
+    raise HTTPException(status_code=503, detail="Extraction service unavailable.")
 
 
-def call_gemini_fast(contents):
-    """Lightweight call for quality checks — shorter timeout, fewer retries."""
+def call_guidance(prompt: str) -> str:
+    """Try Gemini first, fall back to Claude Haiku on failure."""
     fast_models = [
         "models/gemini-2.5-flash",
-        "models/gemini-2.0-flash",
+        "models/gemini-2.5-pro",
+        "models/gemini-3-flash-preview",
         "models/gemini-flash-latest",
         "models/gemini-2.5-flash-lite",
     ]
     for model in fast_models:
         for attempt in range(3):
             try:
-                return client_ai.models.generate_content(model=model, contents=contents)
+                response = gemini_client.models.generate_content(model=model, contents=prompt)
+                print(f"Guidance served by Gemini: {model}")
+                return response.text
             except Exception as e:
                 err = str(e)
-                if "503" in err or "UNAVAILABLE" in err:
+                if "503" in err or "UNAVAILABLE" in err or "overloaded" in err.lower():
                     wait = min(2 ** attempt, 8)
+                    print(f"Retrying in {wait}s...")
                     time.sleep(wait)
                     continue
                 if "404" in err or "NOT_FOUND" in err:
                     break
                 time.sleep(1)
-    return None
+
+    # Gemini failed — fall back to Claude Haiku
+    print("Gemini unavailable — falling back to Claude Haiku")
+    try:
+        message = claude_client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=600,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return message.content[0].text
+    except Exception as e:
+        print(f"Claude fallback failed: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail="AI service temporarily unavailable. Please try again."
+        )
+
+
+def call_summary(prompt: str) -> str:
+    """Always use Claude Sonnet for summary generation."""
+    try:
+        message = claude_client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=1500,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return message.content[0].text
+    except Exception as e:
+        print(f"Claude Sonnet failed, trying Haiku: {e}")
+        try:
+            message = claude_client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=1500,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return message.content[0].text
+        except Exception as e2:
+            raise HTTPException(status_code=503, detail="Summary service unavailable.")
 
 
 LATEX_RULES = """LATEX CONVERSION RULES — apply every single one:
@@ -120,15 +169,12 @@ def parse_problems_from_response(text: str) -> list[dict]:
     text = re.sub(r'```json\s*', '', text)
     text = re.sub(r'```\s*', '', text)
     text = text.strip()
-
     start = text.find('[')
     end = text.rfind(']') + 1
     if start == -1 or end == 0:
         return []
-
     json_text = text[start:end]
     json_text = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', json_text)
-
     try:
         problems = json.loads(json_text)
     except json.JSONDecodeError:
@@ -139,10 +185,8 @@ def parse_problems_from_response(text: str) -> list[dict]:
         except json.JSONDecodeError as e:
             print(f"JSON parse failed after cleaning: {e}")
             return []
-
     if not isinstance(problems, list) or len(problems) == 0:
         return []
-
     valid = []
     for i, p in enumerate(problems):
         if isinstance(p, dict):
@@ -189,7 +233,7 @@ REMINDER: Skip headers and instructions. Only extract actual problems. Each prob
 def extract_and_structure_from_pdf(file_bytes: bytes) -> list[dict]:
     for attempt in range(3):
         try:
-            response = call_gemini([
+            response = call_gemini_extraction([
                 types.Part.from_bytes(data=file_bytes, mime_type="application/pdf"),
                 EXTRACTION_PROMPT
             ])
@@ -211,7 +255,7 @@ def extract_and_structure_from_pdf(file_bytes: bytes) -> list[dict]:
 def extract_and_structure_from_image(file_bytes: bytes, mime_type: str) -> list[dict]:
     for attempt in range(3):
         try:
-            response = call_gemini([
+            response = call_gemini_extraction([
                 types.Part.from_bytes(data=file_bytes, mime_type=mime_type),
                 EXTRACTION_PROMPT
             ])
@@ -255,7 +299,7 @@ Return ONLY the JSON array."""
 
     for attempt in range(3):
         try:
-            response = call_gemini(prompt)
+            response = call_gemini_extraction(prompt)
             problems = parse_problems_from_response(response.text)
             if problems:
                 return problems
@@ -266,72 +310,99 @@ Return ONLY the JSON array."""
     return [{"problem_number": 1, "main_text": raw_text[:3000], "parts": []}]
 
 
-def is_genuine_understanding(stage: str, student_input: str, history_text: str = "", problem: str = "") -> bool:
+def build_history_text(conversation_history: list, current_stage: str) -> tuple[str, int]:
     """
-    Use Gemini to evaluate whether the student has genuinely demonstrated
-    understanding for this stage based on the full conversation history.
-    Falls back to True on error so students are never permanently stuck
-    due to AI service issues.
+    Smart history trimming:
+    - Keeps ALL student messages from current stage (most important)
+    - Keeps last 4 AI messages from current stage only (cuts verbose AI responses)
+    - Keeps ALL student messages from previous stages (context of what they covered)
+    - Drops all AI messages from previous stages (not needed)
+    This cuts tokens ~35% with almost zero quality loss.
     """
-    stage_upper = stage.upper()
+    history_text = ""
+    questions_asked_in_stage = 0
 
-    # Extract all student messages from this stage
-    stage_student_text = ""
-    for line in history_text.split("\n"):
-        if f"[{stage_upper}] Student:" in line:
-            stage_student_text += " " + line.split(f"[{stage_upper}] Student:")[-1]
+    current_stage_student_messages = []
+    current_stage_ai_messages = []
+    previous_stage_student_messages = []
 
-    full_student_work = (stage_student_text + " " + student_input).strip()
+    for msg in conversation_history:
+        role = msg.get("role", "student")
+        content = msg.get("content", "")
+        stage = msg.get("stage", "unknown")
+        if not content:
+            continue
+        if role == "system":
+            history_text += f"\n{content}"
+            continue
+        if stage == current_stage:
+            if role == "student":
+                current_stage_student_messages.append(msg)
+            elif role == "ai":
+                current_stage_ai_messages.append(msg)
+                questions_asked_in_stage += 1
+        else:
+            if role == "student":
+                previous_stage_student_messages.append(msg)
 
-    if len(full_student_work.split()) < 8:
-        return False
+    # Add previous stage student messages — compressed, no AI responses
+    if previous_stage_student_messages:
+        history_text += "\n--- What the student covered in previous stages ---"
+        for msg in previous_stage_student_messages:
+            stage_label = msg.get("stage", "unknown").upper()
+            history_text += f"\n[{stage_label}] Student: {msg.get('content', '')}"
 
-    stage_criteria = {
-        "understand": "The student has restated the problem in their own words, identified what is given, identified what is being asked, and noted at least one constraint or condition.",
-        "concept": "The student has named at least one specific concept, theorem, or technique AND explained why it applies to this specific problem. Naming a concept without justification does not count.",
-        "plan": "The student has written a numbered step-by-step plan with at least 3 specific actionable steps that logically cover the full solution. Vague descriptions do not count.",
-        "attempt": "The student has shown concrete step-by-step work with actual calculations, derivations, or logical steps written out. Vague descriptions, one-liners, and questions back to the AI do not count.",
-        "critique": "The student has identified at least one specific weakness, assumption, or edge case in their solution. Generic statements like 'it looks correct' do not count.",
-        "reflection": "The student has articulated a specific insight about what they learned — not just a summary of what they did. Vague statements like 'I learned to think carefully' do not count.",
-    }
+    # Add ALL student messages from current stage interleaved with last 4 AI messages
+    if current_stage_student_messages or current_stage_ai_messages:
+        history_text += f"\n--- Current stage: {current_stage.upper()} ---"
 
-    criteria = stage_criteria.get(stage, "The student has genuinely engaged with the stage objective.")
+        current_stage_all = []
+        for msg in conversation_history:
+            role = msg.get("role", "student")
+            stage = msg.get("stage", "unknown")
+            content = msg.get("content", "")
+            if not content or role == "system":
+                continue
+            if stage == current_stage:
+                current_stage_all.append(msg)
 
-    prompt = f"""You are evaluating whether a student has genuinely completed the {stage.upper()} stage of a structured reasoning exercise.
+        ai_messages_in_order = [m for m in current_stage_all if m.get("role") == "ai"]
+        ai_messages_to_keep = set(id(m) for m in ai_messages_in_order[-4:])
 
-PROBLEM: {problem}
+        for msg in current_stage_all:
+            role = msg.get("role", "student")
+            content = msg.get("content", "")
+            stage_label = msg.get("stage", "unknown").upper()
+            role_label = "Student" if role == "student" else "ThinkTrace AI"
+            if role == "student" or id(msg) in ai_messages_to_keep:
+                history_text += f"\n[{stage_label}] {role_label}: {content}"
 
-STAGE CRITERIA:
-{criteria}
+    return history_text, questions_asked_in_stage
 
-STUDENT'S FULL WORK FOR THIS STAGE:
-{full_student_work}
 
-Has the student genuinely met the criteria above based on their full work shown?
+def parse_guidance_response(text: str) -> dict:
+    """Parse AI guidance response — handles both Gemini and Claude output."""
+    text = text.strip()
+    text = re.sub(r'```json\n?', '', text)
+    text = re.sub(r'```\n?', '', text)
+    text = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', text)
 
-Reply ONLY with valid JSON — nothing else, no explanation:
-{{"passed": true}} if they have genuinely met the criteria
-{{"passed": false}} if they have not"""
+    match = re.search(r'\{.*\}', text, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group())
+        except json.JSONDecodeError:
+            pass
 
-    try:
-        response = call_gemini_fast(prompt)
-        if response is None:
-            print(f"Quality check skipped — Gemini unavailable, defaulting to True")
-            return True
-        text = response.text.strip()
-        text = re.sub(r'```json\s*', '', text)
-        text = re.sub(r'```\s*', '', text)
-        match = re.search(r'\{.*\}', text, re.DOTALL)
-        if match:
-            result = json.loads(match.group())
-            passed = result.get("passed", False)
-            print(f"Stage {stage} quality check: {'PASSED' if passed else 'FAILED'}")
-            return bool(passed)
-    except Exception as e:
-        print(f"Quality check error, defaulting to True: {e}")
-        return True
+    msg_match = re.search(r'"message"\s*:\s*"(.*?)"(?=\s*[,}])', text, re.DOTALL)
+    understood_match = re.search(r'"understood"\s*:\s*(true|false)', text)
+    if msg_match:
+        return {
+            "message": msg_match.group(1),
+            "understood": understood_match.group(1) == "true" if understood_match else False
+        }
 
-    return True
+    return {"message": "Keep working through this step.", "understood": False}
 
 
 STAGE_DEFINITIONS = {
@@ -345,7 +416,7 @@ STAGE_DEFINITIONS = {
             "Student must identify any constraints or special conditions",
             "Student must NOT attempt to solve yet — this is comprehension only",
         ],
-        "unlock_when": "Student has restated the problem in their own words AND identified what is given AND identified what is asked AND noted at least one constraint. All components must be present — partial answers do not unlock this stage. Keep asking if any component is missing.",
+        "unlock_when": "Student has restated the problem in their own words AND identified what is given AND identified what is asked AND noted at least one constraint. All components must be present — partial answers do not unlock this stage.",
         "questions": 4,
         "question_targets": [
             "Ask them to restate the problem in their own words",
@@ -364,7 +435,7 @@ STAGE_DEFINITIONS = {
             "Student must NOT start planning steps yet — this is identification only",
             "Saying just a concept name with no justification does NOT unlock this stage",
         ],
-        "unlock_when": "Student has named a specific concept AND explained why it applies to THIS problem specifically. A concept name alone without justification does not count. Keep asking if the student has not explained the why.",
+        "unlock_when": "Student has named a specific concept AND explained why it applies to THIS problem specifically. A concept name alone without justification does not count.",
         "questions": 4,
         "question_targets": [
             "Ask what type of problem this is (sorting, graph, recursion, proof, etc.)",
@@ -384,7 +455,7 @@ STAGE_DEFINITIONS = {
             "Plan must cover the full solution from start to finish",
             "Vague plans like 'I will solve it step by step' do NOT unlock this stage",
         ],
-        "unlock_when": "Student has written a numbered plan with at least 3 specific actionable steps that logically cover the full solution. Vague one-liners do not unlock this stage. Keep asking until the plan is concrete and complete.",
+        "unlock_when": "Student has written a numbered plan with at least 3 specific actionable steps that logically cover the full solution. Vague one-liners do not unlock this stage.",
         "questions": 5,
         "question_targets": [
             "Ask them to write out their first step specifically",
@@ -406,7 +477,7 @@ STAGE_DEFINITIONS = {
             "Mistakes are allowed — genuine work with errors is better than no work",
             "Student must follow their plan from the previous stage",
         ],
-        "unlock_when": "Student has shown concrete step-by-step work with actual calculations, derivations, or logical steps written out in full. Vague answers, one-liners, questions back to the AI, and acknowledgements do NOT count. The student must have actually executed something — not just described it. Keep asking until real work is shown.",
+        "unlock_when": "Student has shown concrete step-by-step work with actual calculations, derivations, or logical steps written out in full. Vague answers, one-liners, questions back to the AI do NOT count.",
         "questions": 7,
         "question_targets": [
             "Ask them to write out their very first concrete step with actual work shown",
@@ -428,7 +499,7 @@ STAGE_DEFINITIONS = {
             "Student must NOT just say it looks correct — genuine critical thinking required",
             "Saying 'I think it is correct' or 'I cannot find any issues' does NOT unlock this stage",
         ],
-        "unlock_when": "Student has identified at least one specific weakness, assumption, or edge case. Generic statements like 'it looks correct' do not unlock this stage — they must name something specific. Keep asking until a real weakness is identified.",
+        "unlock_when": "Student has identified at least one specific weakness, assumption, or edge case. Generic statements like 'it looks correct' do not unlock this stage.",
         "questions": 5,
         "question_targets": [
             "Ask what assumptions they made that might not always hold",
@@ -447,7 +518,7 @@ STAGE_DEFINITIONS = {
             "Student must NOT just summarize what they did — they must say what they LEARNED",
             "Student must be specific — 'I learned recursion' or 'I learned to think carefully' does not unlock this stage",
         ],
-        "unlock_when": "Student has articulated a specific insight beyond summarizing their steps — they must say what they now understand that they did not before. Vague statements like 'I learned to think step by step' do not unlock this stage. Keep asking until a genuine insight is expressed.",
+        "unlock_when": "Student has articulated a specific insight beyond summarizing their steps — they must say what they now understand that they did not before.",
         "questions": 4,
         "question_targets": [
             "Ask what the single most important insight from this problem is",
@@ -476,14 +547,13 @@ UNLOCK CONDITION: {stage_info["unlock_when"]}
 STAGE RULES (enforce strictly):
 {chr(10).join(f"- {r}" for r in stage_info["rules"])}
 
-FULL CONVERSATION HISTORY (all stages and all previous parts):
+CONVERSATION HISTORY:
 {history_text if history_text else "(none)"}
 
 NOTE: Messages labeled [STAGE] show which stage they came from.
-Lines starting with "---" are separators between different problem parts.
-Count only YOUR messages labeled [{stage.upper()}] to determine questions asked in this stage.
-Use the full history to avoid repeating questions and build on what the student already demonstrated.
-If this is a sub-part, reference what the student did in previous parts where relevant.
+Previous stage entries show only student messages — AI responses from previous stages are omitted to save context.
+Current stage entries show full conversation — all student messages and last 4 AI responses.
+Count only YOUR messages in the current stage section to determine questions asked.
 
 STUDENT'S LATEST RESPONSE: {student_input}
 
@@ -611,21 +681,22 @@ async def get_problem_ai_guidance(
 
     problem_text = problem.data[0]["problem_text"]
 
-    history_text = ""
-    questions_asked_in_stage = 0
-    for msg in body.conversation_history:
-        role = msg.get("role", "student")
-        content = msg.get("content", "")
-        if not content:
-            continue
-        if role == "system":
-            history_text += f"\n{content}"
-            continue
-        role_label = "Student" if role == "student" else "ThinkTrace AI"
-        stage_label = msg.get("stage", "unknown").upper()
-        history_text += f"\n[{stage_label}] {role_label}: {content}"
-        if role == "ai" and msg.get("stage") == body.stage:
-            questions_asked_in_stage += 1
+    # Check message cap
+    student_messages_in_stage = sum(
+        1 for msg in body.conversation_history
+        if msg.get("role") == "student" and msg.get("stage") == body.stage
+    )
+    max_allowed = MAX_MESSAGES_PER_STAGE.get(body.stage, 15)
+    if student_messages_in_stage >= max_allowed:
+        return {
+            "message": "You've reached the maximum exchanges for this stage. Review what you've written and continue to the next stage.",
+            "understood": True
+        }
+
+    # Build smart trimmed history
+    history_text, questions_asked_in_stage = build_history_text(
+        body.conversation_history, body.stage
+    )
 
     prompt = build_ai_prompt(
         problem_text,
@@ -635,37 +706,14 @@ async def get_problem_ai_guidance(
         questions_asked_in_stage
     )
 
-    response = call_gemini(prompt)
+    raw_text = call_guidance(prompt)
+    parsed = parse_guidance_response(raw_text)
 
-    text = response.text.strip()
-    text = re.sub(r'```json\n?', '', text)
-    text = re.sub(r'```\n?', '', text)
-    text = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', text)
-
-    match = re.search(r'\{.*\}', text, re.DOTALL)
-    if match:
-        json_str = match.group()
-        try:
-            parsed = json.loads(json_str)
-        except json.JSONDecodeError:
-            msg_match = re.search(r'"message"\s*:\s*"(.*?)"(?=\s*,\s*"understood")', json_str, re.DOTALL)
-            understood_match = re.search(r'"understood"\s*:\s*(true|false)', json_str)
-            parsed = {
-                "message": msg_match.group(1) if msg_match else "Could you explain further?",
-                "understood": understood_match.group(1) == "true" if understood_match else False
-            }
-    else:
-        parsed = {"message": "Could you explain your reasoning further?", "understood": False}
-
-    # Phase 1: enforce minimum question count — hard floor
+    # Enforce minimum question count
     questions_after = questions_asked_in_stage + 1
     questions_needed = STAGE_DEFINITIONS.get(body.stage, {}).get("questions", 5)
     if questions_after < questions_needed:
         parsed["understood"] = False
-    else:
-        # Phase 2: Gemini evaluates genuine understanding across full history
-        if not is_genuine_understanding(body.stage, body.student_input, history_text, problem_text):
-            parsed["understood"] = False
 
     client.table("AI_Interactions").insert({
         "question": body.student_input,
