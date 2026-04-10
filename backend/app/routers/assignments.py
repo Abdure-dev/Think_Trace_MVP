@@ -102,8 +102,6 @@ def parse_problems_from_response(text: str) -> list[dict]:
         return []
 
     json_text = text[start:end]
-
-    # Fix invalid single backslash escapes from Gemini LaTeX output
     json_text = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', json_text)
 
     try:
@@ -260,32 +258,41 @@ def is_genuine_attempt(student_input: str) -> bool:
     return has_math or is_substantive_prose
 
 
-def is_genuine_understanding(stage: str, student_input: str) -> bool:
+def is_genuine_understanding(stage: str, student_input: str, history_text: str = "") -> bool:
     """
-    Check if student has demonstrated genuine understanding for the given stage.
-    Called only after minimum question count is reached.
-    Returns False to keep probing if response is too vague or incomplete.
+    Check genuine understanding across the full stage conversation,
+    not just the last message. This prevents blocking students who
+    did the work earlier but send a short follow-up message.
     """
-    text = student_input.strip().lower()
-    word_count = len(text.split())
+    stage_upper = stage.upper()
+
+    # Collect all student messages from this stage in history
+    stage_student_text = ""
+    for line in history_text.split("\n"):
+        if f"[{stage_upper}] Student:" in line:
+            stage_student_text += " " + line.split(f"[{stage_upper}] Student:")[-1]
+
+    # Combine stage history with current input
+    full_text = (stage_student_text + " " + student_input).strip().lower()
+    word_count = len(full_text.split())
 
     if word_count < 8:
         return False
 
     if stage == "understand":
-        has_given = any(w in text for w in [
+        has_given = any(w in full_text for w in [
             "given", "input", "we have", "we know", "starts with",
-            "assume", "provided", "know that"
+            "assume", "provided", "know that", "have that"
         ])
-        has_goal = any(w in text for w in [
+        has_goal = any(w in full_text for w in [
             "find", "prove", "show", "determine", "goal", "asked",
-            "want", "need to", "output", "result"
+            "want", "need to", "output", "result", "return"
         ])
         has_restate = word_count >= 20
         return has_given and has_goal and has_restate
 
     elif stage == "concept":
-        has_concept = any(w in text for w in [
+        has_concept = any(w in full_text for w in [
             "induction", "recursion", "dynamic", "greedy", "divide", "master theorem",
             "fibonacci", "gcd", "theorem", "lemma", "proof", "invariant",
             "linear", "matrix", "eigenvalue", "integral", "derivative", "limit",
@@ -293,7 +300,7 @@ def is_genuine_understanding(stage: str, student_input: str) -> bool:
             "heap", "queue", "stack", "modular", "pigeonhole", "contradict",
             "contradiction", "strong induction", "weak induction", "base case"
         ])
-        has_justification = any(w in text for w in [
+        has_justification = any(w in full_text for w in [
             "because", "since", "therefore", "this works", "applies",
             "fits", "the reason", "this is because", "which means",
             "so that", "in order to", "allows us", "helps us", "enables"
@@ -301,7 +308,8 @@ def is_genuine_understanding(stage: str, student_input: str) -> bool:
         return has_concept and has_justification and word_count >= 15
 
     elif stage == "plan":
-        has_steps = any(c in student_input for c in [
+        combined_raw = stage_student_text + " " + student_input
+        has_steps = any(c in combined_raw for c in [
             "1.", "2.", "3.", "1)", "2)", "3)",
             "step 1", "step 2", "first,", "then,", "finally,",
             "next,", "after that", "lastly"
@@ -309,37 +317,52 @@ def is_genuine_understanding(stage: str, student_input: str) -> bool:
         return has_steps and word_count >= 20
 
     elif stage == "attempt":
-        return is_genuine_attempt(student_input)
+        # Check full stage history for math work
+        combined = stage_student_text + " " + student_input
+        if len(combined.strip()) < 80:
+            return False
+        math_chars = ['=', '+', '*', '/', '\\', '^', '≤', '≥', '∈',
+                      'O(', 'Θ(', 'Ω(', 'log', 'T(', 'f(', 'g(',
+                      'mod', 'gcd', 'lcm', '∑', '∏']
+        has_math = any(c in combined for c in math_chars)
+        is_substantive = len(combined.split()) >= 30
+        # Also block if current input is just a question
+        if student_input.strip().endswith("?") and len(student_input.strip()) < 60:
+            return False
+        return has_math or is_substantive
 
     elif stage == "critique":
-        has_specific_critique = any(w in text for w in [
+        has_specific_critique = any(w in full_text for w in [
             "assume", "assumption", "if", "when", "case", "fails", "break",
             "edge", "overflow", "negative", "zero", "empty", "infinite",
             "however", "but", "limitation", "weakness", "issue",
             "could fail", "might not", "does not handle", "what if",
-            "worse", "optimal", "improve", "better", "alternative"
+            "worse", "optimal", "improve", "better", "alternative",
+            "b = 0", "b=0", "base case", "edge case", "not always",
+            "only works", "does not cover", "misses"
         ])
-        is_generic = any(p in text for p in [
+        is_generic = any(p in full_text for p in [
             "looks correct", "seems correct", "think it is correct",
             "i think it works", "no issues", "cannot find", "nothing wrong",
-            "it is fine", "it should work"
+            "it is fine", "it should work", "can't find any"
         ])
-        return has_specific_critique and not is_generic and word_count >= 15
+        return has_specific_critique and not is_generic
 
     elif stage == "reflection":
-        has_learning = any(w in text for w in [
+        has_learning = any(w in full_text for w in [
             "learned", "realize", "realise", "understand now", "now i know",
             "key insight", "important", "takeaway", "remember", "pattern",
             "connect", "similar to", "reminds me", "generalizes", "applies to",
             "next time", "in the future", "always", "whenever", "the trick",
-            "the key", "what i did not", "did not realize", "surprised"
+            "the key", "what i did not", "did not realize", "surprised",
+            "i now see", "i now understand", "i now know"
         ])
-        is_vague = any(p in text for p in [
+        is_vague = any(p in full_text for p in [
             "i learned to think", "i learned to be careful",
             "i learned step by step", "i learned to take my time",
             "i learned to work slowly", "i learned to read carefully"
         ])
-        return has_learning and not is_vague and word_count >= 15
+        return has_learning and not is_vague
 
     return True
 
@@ -499,7 +522,7 @@ STUDENT'S LATEST RESPONSE: {student_input}
 
 YOUR STATUS:
 - Questions asked in {stage.upper()} stage so far: {questions_asked}
-- Questions remaining: {questions_remaining} of {stage_info["questions"]} required
+- Questions remaining before minimum reached: {questions_remaining} of {stage_info["questions"]} required
 - Your next question should target: {next_question_target}
 
 ABSOLUTE RULES — NEVER BREAK THESE:
@@ -673,8 +696,8 @@ async def get_problem_ai_guidance(
     if questions_after < questions_needed:
         parsed["understood"] = False
     else:
-        # Phase 2: minimum reached — now check quality
-        if not is_genuine_understanding(body.stage, body.student_input):
+        # Phase 2: minimum reached — check genuine understanding across full history
+        if not is_genuine_understanding(body.stage, body.student_input, history_text):
             parsed["understood"] = False
 
     client.table("AI_Interactions").insert({
