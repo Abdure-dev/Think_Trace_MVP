@@ -61,10 +61,12 @@ INLINE MATH: Math within sentences uses $...$"""
 
 MODELS = [
     "models/gemini-2.5-flash",
+    "models/gemini-2.0-flash",
     "models/gemini-2.5-pro",
     "models/gemini-3-flash-preview",
     "models/gemini-3-pro-preview",
     "models/gemini-flash-latest",
+    "models/gemini-2.5-flash-lite",
 ]
 
 
@@ -77,22 +79,44 @@ def call_gemini(contents, retries=5):
                 err = str(e)
                 print(f"Model {model} attempt {attempt + 1} failed: {err}")
                 if "503" in err or "UNAVAILABLE" in err or "overloaded" in err.lower():
-                    wait = min(2 ** attempt, 30)
+                    wait = min(2 ** attempt, 16)
                     print(f"Retrying in {wait}s...")
                     time.sleep(wait)
                     continue
                 if "404" in err or "NOT_FOUND" in err:
                     break
-                time.sleep(2)
+                time.sleep(1)
     raise HTTPException(
         status_code=503,
         detail="AI service temporarily unavailable. Please try again in a moment."
     )
 
 
+def call_gemini_fast(contents):
+    """Lightweight call for quality checks — shorter timeout, fewer retries."""
+    fast_models = [
+        "models/gemini-2.5-flash",
+        "models/gemini-2.0-flash",
+        "models/gemini-flash-latest",
+        "models/gemini-2.5-flash-lite",
+    ]
+    for model in fast_models:
+        for attempt in range(3):
+            try:
+                return client_ai.models.generate_content(model=model, contents=contents)
+            except Exception as e:
+                err = str(e)
+                if "503" in err or "UNAVAILABLE" in err:
+                    wait = min(2 ** attempt, 8)
+                    time.sleep(wait)
+                    continue
+                if "404" in err or "NOT_FOUND" in err:
+                    break
+                time.sleep(1)
+    return None
+
+
 def parse_problems_from_response(text: str) -> list[dict]:
-    """Parse and validate JSON array of problems from AI response.
-    Handles invalid LaTeX backslash escapes that Gemini produces."""
     text = re.sub(r'```json\s*', '', text)
     text = re.sub(r'```\s*', '', text)
     text = text.strip()
@@ -103,14 +127,11 @@ def parse_problems_from_response(text: str) -> list[dict]:
         return []
 
     json_text = text[start:end]
-
-    # Fix invalid single backslash escapes from Gemini LaTeX output
     json_text = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', json_text)
 
     try:
         problems = json.loads(json_text)
     except json.JSONDecodeError:
-        # Second attempt: more aggressive cleaning
         json_text = json_text.replace('\\n', ' ').replace('\\t', ' ')
         json_text = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', json_text)
         try:
@@ -321,7 +342,7 @@ STAGE_DEFINITIONS = {
             "Mistakes are allowed — genuine work with errors is better than no work",
             "Student must follow their plan from the previous stage",
         ],
-        "unlock_when": "Student has shown concrete step-by-step work with actual calculations, derivations, or logical steps written out in full. Vague answers, one-liners, questions back to the AI, and acknowledgements of the AI's question do NOT count. The student must have actually executed something — not just described it.",
+        "unlock_when": "Student has shown concrete step-by-step work with actual calculations, derivations, or logical steps written out in full. Vague answers, one-liners, questions back to the AI, and acknowledgements do NOT count. The student must have actually executed something — not just described it.",
         "questions": 7,
         "question_targets": [
             "Ask them to write out their very first concrete step with actual work shown",
@@ -440,139 +461,71 @@ CRITICAL JSON FORMATTING: Double-escape LaTeX: \\\\frac not \\frac. Wrap ALL mat
     return base + suffix
 
 
-def is_genuine_attempt(student_input: str) -> bool:
-    """Check if a student's attempt stage response contains real work."""
-    text = student_input.strip()
-
-    if text.endswith("?"):
-        return False
-
-    if len(text) < 80:
-        return False
-
-    math_chars = ['=', '+', '*', '/', '\\', '^', '≤', '≥', '∈', '∉', '⊆',
-                  'O(', 'Θ(', 'Ω(', 'log', 'T(', 'f(', 'g(', 'n)', 'k)', '∑', '∏']
-    has_math = any(c in text for c in math_chars)
-    is_substantive_prose = len(text.split()) >= 30
-
-    if not has_math and not is_substantive_prose:
-        return False
-
-    return True
-
-
-def is_genuine_understanding(stage: str, student_input: str, history_text: str = "") -> bool:
+def is_genuine_understanding(stage: str, student_input: str, history_text: str = "", problem: str = "") -> bool:
+    """
+    Use Gemini to evaluate whether the student has genuinely demonstrated
+    understanding for this stage based on the full conversation history.
+    Falls back to True on error so students are never permanently stuck
+    due to AI service issues.
+    """
     stage_upper = stage.upper()
 
-    # Collect all student messages from this stage in history
+    # Extract all student messages from this stage
     stage_student_text = ""
     for line in history_text.split("\n"):
         if f"[{stage_upper}] Student:" in line:
             stage_student_text += " " + line.split(f"[{stage_upper}] Student:")[-1]
 
-    # Combine stage history with current input
-    full_text = (stage_student_text + " " + student_input).strip().lower()
-    word_count = len(full_text.split())
+    full_student_work = (stage_student_text + " " + student_input).strip()
 
-    # If the student's latest message is a short follow-up (not the main work)
-    # but the full stage history is substantive, allow it
-    latest_lower = student_input.strip().lower()
-    latest_word_count = len(latest_lower.split())
-    history_is_substantive = len(stage_student_text.split()) >= 30
-
-    # Block only if the ENTIRE stage history is thin — not just the last message
-    if word_count < 8:
+    # If there's barely anything written, don't bother calling Gemini
+    if len(full_student_work.split()) < 8:
         return False
 
-    # If history is substantive and latest is just a short follow-up, 
-    # check history alone
-    if history_is_substantive and latest_word_count <= 10:
-        check_text = stage_student_text.strip().lower()
-    else:
-        check_text = full_text
+    stage_criteria = {
+        "understand": "The student has restated the problem in their own words, identified what is given, identified what is being asked, and noted at least one constraint or condition.",
+        "concept": "The student has named at least one specific concept, theorem, or technique AND explained why it applies to this specific problem. Naming a concept without justification does not count.",
+        "plan": "The student has written a numbered step-by-step plan with at least 3 specific actionable steps that logically cover the full solution. Vague descriptions do not count.",
+        "attempt": "The student has shown concrete step-by-step work with actual calculations, derivations, or logical steps written out. Vague descriptions, one-liners, and questions back to the AI do not count.",
+        "critique": "The student has identified at least one specific weakness, assumption, or edge case in their solution. Generic statements like 'it looks correct' do not count.",
+        "reflection": "The student has articulated a specific insight about what they learned — not just a summary of what they did. Vague statements like 'I learned to think carefully' do not count.",
+    }
 
-    if stage == "understand":
-        has_given = any(w in check_text for w in [
-            "given", "input", "we have", "we know", "starts with",
-            "assume", "provided", "know that", "have that"
-        ])
-        has_goal = any(w in check_text for w in [
-            "find", "prove", "show", "determine", "goal", "asked",
-            "want", "need to", "output", "result", "return"
-        ])
-        has_restate = len(check_text.split()) >= 20
-        return has_given and has_goal and has_restate
+    criteria = stage_criteria.get(stage, "The student has genuinely engaged with the stage objective.")
 
-    elif stage == "concept":
-        has_concept = any(w in check_text for w in [
-            "induction", "recursion", "dynamic", "greedy", "divide", "master theorem",
-            "fibonacci", "gcd", "theorem", "lemma", "proof", "invariant",
-            "linear", "matrix", "eigenvalue", "integral", "derivative", "limit",
-            "complexity", "big o", "graph", "tree", "sort", "search", "hash",
-            "heap", "queue", "stack", "modular", "pigeonhole", "contradict",
-            "contradiction", "strong induction", "weak induction", "base case"
-        ])
-        has_justification = any(w in check_text for w in [
-            "because", "since", "therefore", "this works", "applies",
-            "fits", "the reason", "this is because", "which means",
-            "so that", "in order to", "allows us", "helps us", "enables"
-        ])
-        return has_concept and has_justification and len(check_text.split()) >= 15
+    prompt = f"""You are evaluating whether a student has genuinely completed the {stage.upper()} stage of a structured reasoning exercise.
 
-    elif stage == "plan":
-        combined_raw = stage_student_text + " " + student_input
-        has_steps = any(c in combined_raw for c in [
-            "1.", "2.", "3.", "1)", "2)", "3)",
-            "step 1", "step 2", "first,", "then,", "finally,",
-            "next,", "after that", "lastly"
-        ])
-        return has_steps and len(check_text.split()) >= 20
+PROBLEM: {problem}
 
-    elif stage == "attempt":
-        combined = stage_student_text + " " + student_input
-        if len(combined.strip()) < 80:
-            return False
-        math_chars = ['=', '+', '*', '/', '\\', '^', '≤', '≥', '∈',
-                      'O(', 'Θ(', 'Ω(', 'log', 'T(', 'f(', 'g(',
-                      'mod', 'gcd', 'lcm', '∑', '∏']
-        has_math = any(c in combined for c in math_chars)
-        is_substantive = len(combined.split()) >= 30
-        if student_input.strip().endswith("?") and len(student_input.strip()) < 60:
-            return False
-        return has_math or is_substantive
+STAGE CRITERIA:
+{criteria}
 
-    elif stage == "critique":
-        has_specific_critique = any(w in check_text for w in [
-            "assume", "assumption", "if", "when", "case", "fails", "break",
-            "edge", "overflow", "negative", "zero", "empty", "infinite",
-            "however", "but", "limitation", "weakness", "issue",
-            "could fail", "might not", "does not handle", "what if",
-            "worse", "optimal", "improve", "better", "alternative",
-            "b = 0", "b=0", "base case", "edge case", "not always",
-            "only works", "does not cover", "misses"
-        ])
-        is_generic = any(p in check_text for p in [
-            "looks correct", "seems correct", "think it is correct",
-            "i think it works", "no issues", "cannot find", "nothing wrong",
-            "it is fine", "it should work", "can't find any"
-        ])
-        return has_specific_critique and not is_generic
+STUDENT'S FULL WORK FOR THIS STAGE:
+{full_student_work}
 
-    elif stage == "reflection":
-        has_learning = any(w in check_text for w in [
-            "learned", "realize", "realise", "understand now", "now i know",
-            "key insight", "important", "takeaway", "remember", "pattern",
-            "connect", "similar to", "reminds me", "generalizes", "applies to",
-            "next time", "in the future", "always", "whenever", "the trick",
-            "the key", "what i did not", "did not realize", "surprised",
-            "i now see", "i now understand", "i now know"
-        ])
-        is_vague = any(p in check_text for p in [
-            "i learned to think", "i learned to be careful",
-            "i learned step by step", "i learned to take my time",
-            "i learned to work slowly", "i learned to read carefully"
-        ])
-        return has_learning and not is_vague
+Has the student genuinely met the criteria above based on their full work shown?
+
+Reply ONLY with valid JSON — nothing else, no explanation:
+{{"passed": true}} if they have genuinely met the criteria
+{{"passed": false}} if they have not"""
+
+    try:
+        response = call_gemini_fast(prompt)
+        if response is None:
+            print(f"Quality check skipped — Gemini unavailable, defaulting to True")
+            return True
+        text = response.text.strip()
+        text = re.sub(r'```json\s*', '', text)
+        text = re.sub(r'```\s*', '', text)
+        match = re.search(r'\{.*\}', text, re.DOTALL)
+        if match:
+            result = json.loads(match.group())
+            passed = result.get("passed", False)
+            print(f"Stage {stage} quality check: {'PASSED' if passed else 'FAILED'}")
+            return bool(passed)
+    except Exception as e:
+        print(f"Quality check error, defaulting to True: {e}")
+        return True
 
     return True
 
@@ -739,8 +692,8 @@ async def workspace_ai_guidance(
     if questions_after < questions_needed:
         parsed["understood"] = False
     else:
-        # Phase 2: minimum reached — now check genuine understanding
-        if not is_genuine_understanding(body.stage, body.student_input, questions_after):
+        # Phase 2: minimum reached — Gemini evaluates genuine understanding
+        if not is_genuine_understanding(body.stage, body.student_input, history_text, body.problem):
             parsed["understood"] = False
 
     return parsed
