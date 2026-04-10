@@ -85,7 +85,6 @@ const STAGE_COLORS: Record<
   critique: { bg: "#fff7ed", border: "#fed7aa", label: "Critique" },
   reflection: { bg: "#fdf4ff", border: "#f0abfc", label: "Reflect" },
 };
-
 function renderMath(text: string) {
   const cleaned = (text || "").replace(/\\\\/g, "\\");
   return cleaned.split(/(\$\$[\s\S]+?\$\$|\$[^$]+?\$)/).map((part, i) => {
@@ -573,7 +572,10 @@ function WorkspaceProblemInner() {
   };
 
   const currentIndex = stages.indexOf(stage);
-  const canContinue = timerDone && understood;
+
+  // ── KEY FIX: timer is informational only, not a gate ──
+  const canContinue = understood;
+
   const modeInfo = MODES[mode] || MODES.guided;
   const currentPart =
     problem?.parts && problem.parts.length > 0
@@ -620,9 +622,7 @@ function WorkspaceProblemInner() {
       }
       const res = await fetch(
         `${process.env.NEXT_PUBLIC_API_URL}/workspace-problems/${problem_id}`,
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        }
+        { headers: { Authorization: `Bearer ${token}` } }
       );
       if (!res.ok) {
         setLoading(false);
@@ -796,7 +796,6 @@ function WorkspaceProblemInner() {
       const { jsPDF } = await import("jspdf");
       const doc = new jsPDF();
 
-      // Header bar
       doc.setFillColor(128, 0, 0);
       doc.rect(0, 0, 210, 42, "F");
       doc.setFillColor(78, 42, 132);
@@ -817,7 +816,6 @@ function WorkspaceProblemInner() {
 
       let y = 56;
 
-      // Problem text
       doc.setTextColor(90, 74, 58);
       doc.setFontSize(9);
       doc.setFont("helvetica", "italic");
@@ -828,7 +826,6 @@ function WorkspaceProblemInner() {
       doc.text(probLines, 14, y);
       y += probLines.length * 4.5 + 10;
 
-      // Key insight box
       doc.setFillColor(245, 240, 255);
       const insightLines = doc.splitTextToSize(summary.key_insight, 172);
       doc.roundedRect(10, y - 4, 190, insightLines.length * 5 + 18, 3, 3, "F");
@@ -842,7 +839,6 @@ function WorkspaceProblemInner() {
       doc.text(insightLines, 14, y + 11);
       y += insightLines.length * 5 + 24;
 
-      // Strongest/weakest
       doc.setFillColor(240, 253, 244);
       doc.roundedRect(10, y - 3, 90, 20, 2, 2, "F");
       doc.setTextColor(22, 163, 74);
@@ -876,7 +872,6 @@ function WorkspaceProblemInner() {
       );
       y += 28;
 
-      // Stage insights
       doc.setTextColor(78, 42, 132);
       doc.setFontSize(11);
       doc.setFont("helvetica", "bold");
@@ -911,7 +906,6 @@ function WorkspaceProblemInner() {
         y += lines.length * 5 + 18;
       }
 
-      // Growth note
       if (y > 245) {
         doc.addPage();
         y = 20;
@@ -928,7 +922,6 @@ function WorkspaceProblemInner() {
       doc.setFontSize(10);
       doc.text(growthLines, 14, y + 11);
 
-      // Footer
       const pageCount = (doc as any).internal.getNumberOfPages();
       for (let i = 1; i <= pageCount; i++) {
         doc.setPage(i);
@@ -982,7 +975,6 @@ function WorkspaceProblemInner() {
   if (allPartsComplete) {
     return (
       <div style={{ minHeight: "100vh", background: "#f8f9fc" }}>
-        {/* Nav */}
         <div
           style={{
             padding: "16px 32px",
@@ -1037,7 +1029,6 @@ function WorkspaceProblemInner() {
         </div>
 
         <div style={{ padding: "40px", maxWidth: "680px", margin: "0 auto" }}>
-          {/* Complete card */}
           <div
             style={{
               background: "white",
@@ -1045,7 +1036,6 @@ function WorkspaceProblemInner() {
               padding: "36px",
               border: "1px solid rgba(26,18,8,0.06)",
               textAlign: "center",
-              marginBottom: "0",
             }}
           >
             <div
@@ -1331,7 +1321,6 @@ function WorkspaceProblemInner() {
 
       {/* Main */}
       <div style={{ flex: 1, padding: "32px 40px", overflowY: "auto" }}>
-        {/* Sibling context banner */}
         {problem?.sibling_traces && problem.sibling_traces.length > 0 && (
           <div
             style={{
@@ -1536,6 +1525,7 @@ function WorkspaceProblemInner() {
               >
                 {stage}
               </h2>
+              {/* Timer — informational only, not a gate */}
               <div
                 style={{
                   display: "flex",
@@ -1548,13 +1538,13 @@ function WorkspaceProblemInner() {
                   background: timerDone
                     ? "#f0fdf4"
                     : timeLeft < 60
-                    ? "#fef2f2"
-                    : "#fff7ed",
+                    ? "#fff7ed"
+                    : "#f8f9fc",
                   color: timerDone
                     ? "#16a34a"
                     : timeLeft < 60
-                    ? "#ef4444"
-                    : "#d97706",
+                    ? "#d97706"
+                    : "#8a7a6a",
                 }}
               >
                 {timerDone
@@ -1617,7 +1607,7 @@ function WorkspaceProblemInner() {
               />
             </div>
 
-            {/* Input */}
+            {/* Initial input */}
             {!conversing && (
               <MathInput
                 value={studentInput}
@@ -1627,7 +1617,7 @@ function WorkspaceProblemInner() {
               />
             )}
 
-            {/* Conversation */}
+            {/* Conversation history */}
             {currentStageMessages.length > 0 && (
               <div
                 style={{
@@ -1676,7 +1666,9 @@ function WorkspaceProblemInner() {
                     </div>
                   </div>
                 ))}
-                {understood && timerDone && (
+
+                {/* ── KEY FIX: single understood check, no timer gate ── */}
+                {understood && (
                   <p
                     style={{
                       fontSize: "13px",
@@ -1687,21 +1679,10 @@ function WorkspaceProblemInner() {
                     ✓ Ready for next stage
                   </p>
                 )}
-                {understood && !timerDone && (
-                  <p
-                    style={{
-                      fontSize: "13px",
-                      fontWeight: 600,
-                      color: "#d97706",
-                    }}
-                  >
-                    ✓ Stage complete — waiting for timer
-                  </p>
-                )}
               </div>
             )}
 
-            {/* Response input */}
+            {/* Response input when conversing and not yet understood */}
             {conversing && !understood && (
               <div style={{ marginTop: "14px" }}>
                 <p
@@ -1773,9 +1754,7 @@ function WorkspaceProblemInner() {
                       ? "Complete Problem ✓"
                       : `Complete Part (${currentPart?.part_label}) ✓`
                     : "Continue →"
-                  : conversing && !understood
-                  ? "Send →"
-                  : "Submit →"}
+                  : "Send →"}
               </button>
             </div>
           </div>
