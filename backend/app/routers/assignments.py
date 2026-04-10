@@ -259,11 +259,6 @@ def is_genuine_attempt(student_input: str) -> bool:
 
 
 def is_genuine_understanding(stage: str, student_input: str, history_text: str = "") -> bool:
-    """
-    Check genuine understanding across the full stage conversation,
-    not just the last message. This prevents blocking students who
-    did the work earlier but send a short follow-up message.
-    """
     stage_upper = stage.upper()
 
     # Collect all student messages from this stage in history
@@ -276,23 +271,37 @@ def is_genuine_understanding(stage: str, student_input: str, history_text: str =
     full_text = (stage_student_text + " " + student_input).strip().lower()
     word_count = len(full_text.split())
 
+    # If the student's latest message is a short follow-up (not the main work)
+    # but the full stage history is substantive, allow it
+    latest_lower = student_input.strip().lower()
+    latest_word_count = len(latest_lower.split())
+    history_is_substantive = len(stage_student_text.split()) >= 30
+
+    # Block only if the ENTIRE stage history is thin — not just the last message
     if word_count < 8:
         return False
 
+    # If history is substantive and latest is just a short follow-up, 
+    # check history alone
+    if history_is_substantive and latest_word_count <= 10:
+        check_text = stage_student_text.strip().lower()
+    else:
+        check_text = full_text
+
     if stage == "understand":
-        has_given = any(w in full_text for w in [
+        has_given = any(w in check_text for w in [
             "given", "input", "we have", "we know", "starts with",
             "assume", "provided", "know that", "have that"
         ])
-        has_goal = any(w in full_text for w in [
+        has_goal = any(w in check_text for w in [
             "find", "prove", "show", "determine", "goal", "asked",
             "want", "need to", "output", "result", "return"
         ])
-        has_restate = word_count >= 20
+        has_restate = len(check_text.split()) >= 20
         return has_given and has_goal and has_restate
 
     elif stage == "concept":
-        has_concept = any(w in full_text for w in [
+        has_concept = any(w in check_text for w in [
             "induction", "recursion", "dynamic", "greedy", "divide", "master theorem",
             "fibonacci", "gcd", "theorem", "lemma", "proof", "invariant",
             "linear", "matrix", "eigenvalue", "integral", "derivative", "limit",
@@ -300,12 +309,12 @@ def is_genuine_understanding(stage: str, student_input: str, history_text: str =
             "heap", "queue", "stack", "modular", "pigeonhole", "contradict",
             "contradiction", "strong induction", "weak induction", "base case"
         ])
-        has_justification = any(w in full_text for w in [
+        has_justification = any(w in check_text for w in [
             "because", "since", "therefore", "this works", "applies",
             "fits", "the reason", "this is because", "which means",
             "so that", "in order to", "allows us", "helps us", "enables"
         ])
-        return has_concept and has_justification and word_count >= 15
+        return has_concept and has_justification and len(check_text.split()) >= 15
 
     elif stage == "plan":
         combined_raw = stage_student_text + " " + student_input
@@ -314,10 +323,9 @@ def is_genuine_understanding(stage: str, student_input: str, history_text: str =
             "step 1", "step 2", "first,", "then,", "finally,",
             "next,", "after that", "lastly"
         ])
-        return has_steps and word_count >= 20
+        return has_steps and len(check_text.split()) >= 20
 
     elif stage == "attempt":
-        # Check full stage history for math work
         combined = stage_student_text + " " + student_input
         if len(combined.strip()) < 80:
             return False
@@ -326,13 +334,12 @@ def is_genuine_understanding(stage: str, student_input: str, history_text: str =
                       'mod', 'gcd', 'lcm', '∑', '∏']
         has_math = any(c in combined for c in math_chars)
         is_substantive = len(combined.split()) >= 30
-        # Also block if current input is just a question
         if student_input.strip().endswith("?") and len(student_input.strip()) < 60:
             return False
         return has_math or is_substantive
 
     elif stage == "critique":
-        has_specific_critique = any(w in full_text for w in [
+        has_specific_critique = any(w in check_text for w in [
             "assume", "assumption", "if", "when", "case", "fails", "break",
             "edge", "overflow", "negative", "zero", "empty", "infinite",
             "however", "but", "limitation", "weakness", "issue",
@@ -341,7 +348,7 @@ def is_genuine_understanding(stage: str, student_input: str, history_text: str =
             "b = 0", "b=0", "base case", "edge case", "not always",
             "only works", "does not cover", "misses"
         ])
-        is_generic = any(p in full_text for p in [
+        is_generic = any(p in check_text for p in [
             "looks correct", "seems correct", "think it is correct",
             "i think it works", "no issues", "cannot find", "nothing wrong",
             "it is fine", "it should work", "can't find any"
@@ -349,7 +356,7 @@ def is_genuine_understanding(stage: str, student_input: str, history_text: str =
         return has_specific_critique and not is_generic
 
     elif stage == "reflection":
-        has_learning = any(w in full_text for w in [
+        has_learning = any(w in check_text for w in [
             "learned", "realize", "realise", "understand now", "now i know",
             "key insight", "important", "takeaway", "remember", "pattern",
             "connect", "similar to", "reminds me", "generalizes", "applies to",
@@ -357,7 +364,7 @@ def is_genuine_understanding(stage: str, student_input: str, history_text: str =
             "the key", "what i did not", "did not realize", "surprised",
             "i now see", "i now understand", "i now know"
         ])
-        is_vague = any(p in full_text for p in [
+        is_vague = any(p in check_text for p in [
             "i learned to think", "i learned to be careful",
             "i learned step by step", "i learned to take my time",
             "i learned to work slowly", "i learned to read carefully"

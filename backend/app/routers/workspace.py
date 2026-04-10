@@ -461,84 +461,118 @@ def is_genuine_attempt(student_input: str) -> bool:
     return True
 
 
-def is_genuine_understanding(stage: str, student_input: str, questions_asked: int) -> bool:
-    """
-    Check if a student has demonstrated genuine understanding for a given stage.
-    Called only after the minimum question count has been reached.
-    Returns False to keep probing if the response is too vague or incomplete.
-    """
-    text = student_input.strip().lower()
-    word_count = len(text.split())
+def is_genuine_understanding(stage: str, student_input: str, history_text: str = "") -> bool:
+    stage_upper = stage.upper()
 
+    # Collect all student messages from this stage in history
+    stage_student_text = ""
+    for line in history_text.split("\n"):
+        if f"[{stage_upper}] Student:" in line:
+            stage_student_text += " " + line.split(f"[{stage_upper}] Student:")[-1]
+
+    # Combine stage history with current input
+    full_text = (stage_student_text + " " + student_input).strip().lower()
+    word_count = len(full_text.split())
+
+    # If the student's latest message is a short follow-up (not the main work)
+    # but the full stage history is substantive, allow it
+    latest_lower = student_input.strip().lower()
+    latest_word_count = len(latest_lower.split())
+    history_is_substantive = len(stage_student_text.split()) >= 30
+
+    # Block only if the ENTIRE stage history is thin — not just the last message
     if word_count < 8:
         return False
 
+    # If history is substantive and latest is just a short follow-up, 
+    # check history alone
+    if history_is_substantive and latest_word_count <= 10:
+        check_text = stage_student_text.strip().lower()
+    else:
+        check_text = full_text
+
     if stage == "understand":
-        has_given = any(w in text for w in [
+        has_given = any(w in check_text for w in [
             "given", "input", "we have", "we know", "starts with",
             "assume", "provided", "know that", "have that"
         ])
-        has_goal = any(w in text for w in [
+        has_goal = any(w in check_text for w in [
             "find", "prove", "show", "determine", "goal", "asked",
             "want", "need to", "output", "result", "return"
         ])
-        has_restate = word_count >= 20
+        has_restate = len(check_text.split()) >= 20
         return has_given and has_goal and has_restate
 
     elif stage == "concept":
-        has_concept = any(w in text for w in [
+        has_concept = any(w in check_text for w in [
             "induction", "recursion", "dynamic", "greedy", "divide", "master theorem",
             "fibonacci", "gcd", "theorem", "lemma", "proof", "invariant",
             "linear", "matrix", "eigenvalue", "integral", "derivative", "limit",
             "complexity", "big o", "graph", "tree", "sort", "search", "hash",
-            "heap", "queue", "stack", "memoization", "base case", "hypothesis"
+            "heap", "queue", "stack", "modular", "pigeonhole", "contradict",
+            "contradiction", "strong induction", "weak induction", "base case"
         ])
-        has_justification = any(w in text for w in [
-            "because", "since", "therefore", "this works", "applies", "fits",
-            "the reason", "this is because", "which means", "so that",
-            "in order to", "this allows", "enables", "helps us"
+        has_justification = any(w in check_text for w in [
+            "because", "since", "therefore", "this works", "applies",
+            "fits", "the reason", "this is because", "which means",
+            "so that", "in order to", "allows us", "helps us", "enables"
         ])
-        return has_concept and has_justification and word_count >= 15
+        return has_concept and has_justification and len(check_text.split()) >= 15
 
     elif stage == "plan":
-        has_steps = any(c in student_input for c in [
+        combined_raw = stage_student_text + " " + student_input
+        has_steps = any(c in combined_raw for c in [
             "1.", "2.", "3.", "1)", "2)", "3)",
-            "step 1", "step 2", "first,", "then,", "finally,", "next,"
+            "step 1", "step 2", "first,", "then,", "finally,",
+            "next,", "after that", "lastly"
         ])
-        return has_steps and word_count >= 20
+        return has_steps and len(check_text.split()) >= 20
 
     elif stage == "attempt":
-        return is_genuine_attempt(student_input)
+        combined = stage_student_text + " " + student_input
+        if len(combined.strip()) < 80:
+            return False
+        math_chars = ['=', '+', '*', '/', '\\', '^', '≤', '≥', '∈',
+                      'O(', 'Θ(', 'Ω(', 'log', 'T(', 'f(', 'g(',
+                      'mod', 'gcd', 'lcm', '∑', '∏']
+        has_math = any(c in combined for c in math_chars)
+        is_substantive = len(combined.split()) >= 30
+        if student_input.strip().endswith("?") and len(student_input.strip()) < 60:
+            return False
+        return has_math or is_substantive
 
     elif stage == "critique":
-        has_specific_critique = any(w in text for w in [
+        has_specific_critique = any(w in check_text for w in [
             "assume", "assumption", "if", "when", "case", "fails", "break",
             "edge", "overflow", "negative", "zero", "empty", "infinite",
             "however", "but", "limitation", "weakness", "issue",
             "could fail", "might not", "does not handle", "what if",
-            "not optimal", "better approach", "alternative", "improve"
+            "worse", "optimal", "improve", "better", "alternative",
+            "b = 0", "b=0", "base case", "edge case", "not always",
+            "only works", "does not cover", "misses"
         ])
-        is_generic = any(p in text for p in [
+        is_generic = any(p in check_text for p in [
             "looks correct", "seems correct", "think it is correct",
-            "i think it works", "no issues", "cannot find", "can't find",
-            "nothing wrong", "it is fine", "it works fine"
+            "i think it works", "no issues", "cannot find", "nothing wrong",
+            "it is fine", "it should work", "can't find any"
         ])
-        return has_specific_critique and not is_generic and word_count >= 15
+        return has_specific_critique and not is_generic
 
     elif stage == "reflection":
-        has_learning = any(w in text for w in [
+        has_learning = any(w in check_text for w in [
             "learned", "realize", "realise", "understand now", "now i know",
             "key insight", "important", "takeaway", "remember", "pattern",
             "connect", "similar to", "reminds me", "generalizes", "applies to",
             "next time", "in the future", "always", "whenever", "the trick",
-            "the key", "what i now", "i now see", "i now understand"
+            "the key", "what i did not", "did not realize", "surprised",
+            "i now see", "i now understand", "i now know"
         ])
-        is_vague = any(p in text for p in [
+        is_vague = any(p in check_text for p in [
             "i learned to think", "i learned to be careful",
             "i learned step by step", "i learned to take my time",
-            "i learned to work slowly", "i learned to be more careful"
+            "i learned to work slowly", "i learned to read carefully"
         ])
-        return has_learning and not is_vague and word_count >= 15
+        return has_learning and not is_vague
 
     return True
 
