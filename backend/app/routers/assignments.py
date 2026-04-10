@@ -21,6 +21,7 @@ MODELS = [
     "models/gemini-flash-latest",
 ]
 
+
 def call_gemini(contents, retries=5):
     for model in MODELS:
         for attempt in range(retries):
@@ -41,6 +42,7 @@ def call_gemini(contents, retries=5):
         status_code=503,
         detail="AI service temporarily unavailable. Please try again in a moment."
     )
+
 
 LATEX_RULES = """LATEX CONVERSION RULES — apply every single one:
 
@@ -89,16 +91,35 @@ INLINE MATH: Math within sentences uses $...$"""
 
 
 def parse_problems_from_response(text: str) -> list[dict]:
+    """Parse JSON array of problems from AI response with LaTeX escape fix."""
     text = re.sub(r'```json\s*', '', text)
     text = re.sub(r'```\s*', '', text)
     text = text.strip()
+
     start = text.find('[')
     end = text.rfind(']') + 1
     if start == -1 or end == 0:
         return []
-    problems = json.loads(text[start:end])
+
+    json_text = text[start:end]
+
+    # Fix invalid single backslash escapes from Gemini LaTeX output
+    json_text = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', json_text)
+
+    try:
+        problems = json.loads(json_text)
+    except json.JSONDecodeError:
+        json_text = json_text.replace('\\n', ' ').replace('\\t', ' ')
+        json_text = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', json_text)
+        try:
+            problems = json.loads(json_text)
+        except json.JSONDecodeError as e:
+            print(f"JSON parse failed after cleaning: {e}")
+            return []
+
     if not isinstance(problems, list) or len(problems) == 0:
         return []
+
     valid = []
     for i, p in enumerate(problems):
         if isinstance(p, dict):
@@ -222,6 +243,107 @@ Return ONLY the JSON array."""
     return [{"problem_number": 1, "main_text": raw_text[:3000], "parts": []}]
 
 
+# ── Stage quality checkers ────────────────────────────────────────────────────
+
+def is_genuine_attempt(student_input: str) -> bool:
+    """Check if attempt stage response contains real work."""
+    text = student_input.strip()
+    if text.endswith("?"):
+        return False
+    if len(text) < 80:
+        return False
+    math_chars = ['=', '+', '*', '/', '\\', '^', '≤', '≥', '∈', '∉',
+                  'O(', 'Θ(', 'Ω(', 'log', 'T(', 'f(', 'g(', 'n)', 'k)',
+                  '∑', '∏', 'mod', 'gcd', 'lcm']
+    has_math = any(c in text for c in math_chars)
+    is_substantive_prose = len(text.split()) >= 30
+    return has_math or is_substantive_prose
+
+
+def is_genuine_understanding(stage: str, student_input: str) -> bool:
+    """
+    Check if student has demonstrated genuine understanding for the given stage.
+    Called only after minimum question count is reached.
+    Returns False to keep probing if response is too vague or incomplete.
+    """
+    text = student_input.strip().lower()
+    word_count = len(text.split())
+
+    if word_count < 8:
+        return False
+
+    if stage == "understand":
+        has_given = any(w in text for w in [
+            "given", "input", "we have", "we know", "starts with",
+            "assume", "provided", "know that"
+        ])
+        has_goal = any(w in text for w in [
+            "find", "prove", "show", "determine", "goal", "asked",
+            "want", "need to", "output", "result"
+        ])
+        has_restate = word_count >= 20
+        return has_given and has_goal and has_restate
+
+    elif stage == "concept":
+        has_concept = any(w in text for w in [
+            "induction", "recursion", "dynamic", "greedy", "divide", "master theorem",
+            "fibonacci", "gcd", "theorem", "lemma", "proof", "invariant",
+            "linear", "matrix", "eigenvalue", "integral", "derivative", "limit",
+            "complexity", "big o", "graph", "tree", "sort", "search", "hash",
+            "heap", "queue", "stack", "modular", "pigeonhole", "contradict",
+            "contradiction", "strong induction", "weak induction", "base case"
+        ])
+        has_justification = any(w in text for w in [
+            "because", "since", "therefore", "this works", "applies",
+            "fits", "the reason", "this is because", "which means",
+            "so that", "in order to", "allows us", "helps us", "enables"
+        ])
+        return has_concept and has_justification and word_count >= 15
+
+    elif stage == "plan":
+        has_steps = any(c in student_input for c in [
+            "1.", "2.", "3.", "1)", "2)", "3)",
+            "step 1", "step 2", "first,", "then,", "finally,",
+            "next,", "after that", "lastly"
+        ])
+        return has_steps and word_count >= 20
+
+    elif stage == "attempt":
+        return is_genuine_attempt(student_input)
+
+    elif stage == "critique":
+        has_specific_critique = any(w in text for w in [
+            "assume", "assumption", "if", "when", "case", "fails", "break",
+            "edge", "overflow", "negative", "zero", "empty", "infinite",
+            "however", "but", "limitation", "weakness", "issue",
+            "could fail", "might not", "does not handle", "what if",
+            "worse", "optimal", "improve", "better", "alternative"
+        ])
+        is_generic = any(p in text for p in [
+            "looks correct", "seems correct", "think it is correct",
+            "i think it works", "no issues", "cannot find", "nothing wrong",
+            "it is fine", "it should work"
+        ])
+        return has_specific_critique and not is_generic and word_count >= 15
+
+    elif stage == "reflection":
+        has_learning = any(w in text for w in [
+            "learned", "realize", "realise", "understand now", "now i know",
+            "key insight", "important", "takeaway", "remember", "pattern",
+            "connect", "similar to", "reminds me", "generalizes", "applies to",
+            "next time", "in the future", "always", "whenever", "the trick",
+            "the key", "what i did not", "did not realize", "surprised"
+        ])
+        is_vague = any(p in text for p in [
+            "i learned to think", "i learned to be careful",
+            "i learned step by step", "i learned to take my time",
+            "i learned to work slowly", "i learned to read carefully"
+        ])
+        return has_learning and not is_vague and word_count >= 15
+
+    return True
+
+
 STAGE_DEFINITIONS = {
     "understand": {
         "objective": "Read the problem carefully and restate it entirely in your own words. Identify what is given, what you are being asked to find, and any constraints or conditions.",
@@ -233,32 +355,31 @@ STAGE_DEFINITIONS = {
             "Student must identify any constraints or special conditions",
             "Student must NOT attempt to solve yet — this is comprehension only",
         ],
-        "unlock_when": "Student has restated the problem, identified givens, identified the goal, and noted constraints. Even if correct, always ask all 5 questions.",
-        "questions": 5,
+        "unlock_when": "Student has restated the problem in their own words AND identified what is given AND identified what is asked AND noted at least one constraint. All components must be present — partial answers do not unlock this stage. Keep asking if any component is missing.",
+        "questions": 4,
         "question_targets": [
             "Ask them to restate the problem in their own words",
             "Ask what information is given or known",
             "Ask what they are being asked to find or prove",
             "Ask if there are any constraints, edge cases, or special conditions",
-            "Ask what a wrong answer would look like — what are the boundaries of a valid answer",
         ],
     },
     "concept": {
         "objective": "Identify the core concepts, theorems, data structures, or techniques that apply to this problem. Explain WHY each one is relevant.",
-        "goal": "Student identifies the right tools and justifies why they apply.",
+        "goal": "Student identifies the right tools and justifies why they apply — not just names them.",
         "rules": [
             "Student must name at least one specific concept, theorem, or technique",
             "Student must explain WHY it applies — not just name it",
             "Student must connect the concept to the specific structure of the problem",
             "Student must NOT start planning steps yet — this is identification only",
+            "Saying just a concept name with no justification does NOT unlock this stage",
         ],
-        "unlock_when": "Student has named the right approach and justified why it fits. Even if correct immediately, always ask all 5 questions.",
-        "questions": 5,
+        "unlock_when": "Student has named a specific concept AND explained why it applies to THIS problem specifically. A concept name alone without justification does not count. Keep asking if the student has not explained the why.",
+        "questions": 4,
         "question_targets": [
             "Ask what type of problem this is (sorting, graph, recursion, proof, etc.)",
             "Ask what concepts or theorems come to mind and why",
             "Ask why that concept fits the structure of this specific problem",
-            "Ask if there are alternative approaches and why they chose this one",
             "Ask what the key insight is that makes this approach work",
         ],
     },
@@ -271,8 +392,9 @@ STAGE_DEFINITIONS = {
             "Plan must follow logically from the concept identified",
             "Student must NOT execute the plan yet — planning only",
             "Plan must cover the full solution from start to finish",
+            "Vague plans like 'I will solve it step by step' do NOT unlock this stage",
         ],
-        "unlock_when": "Student has a numbered, specific, logical plan. Even if the plan is good immediately, always ask all 5 questions.",
+        "unlock_when": "Student has written a numbered plan with at least 3 specific actionable steps that logically cover the full solution. Vague one-liners do not unlock this stage. Keep asking until the plan is concrete and complete.",
         "questions": 5,
         "question_targets": [
             "Ask them to write out their first step specifically",
@@ -283,35 +405,40 @@ STAGE_DEFINITIONS = {
         ],
     },
     "attempt": {
-        "objective": "Execute your plan step by step. Show ALL your work. Do not skip steps. Write out every calculation, derivation, or logical inference.",
-        "goal": "Student works through the solution with full reasoning shown.",
+        "objective": "Execute your plan step by step. Show ALL your work. Write out every calculation, derivation, or logical inference. Do not skip steps. Do not ask questions — produce the actual solution.",
+        "goal": "Student demonstrates they can execute their plan with concrete, complete, step-by-step work showing every calculation or logical step.",
         "rules": [
-            "Student must show every step — no skipping",
-            "Student must explain each step as they do it",
+            "Student must show every step — no skipping, no summarizing",
+            "Student must write actual calculations, derivations, or logical inferences — not descriptions of what they would do",
+            "Student must NOT ask questions back to the AI — this stage is for doing, not asking",
+            "Student must NOT just acknowledge the AI's question — they must produce actual work",
+            "A one-sentence or vague answer NEVER counts as completion",
+            "Mistakes are allowed — genuine work with errors is better than no work",
             "Student must follow their plan from the previous stage",
-            "Mistakes are allowed — genuine engagement matters more than correctness",
-            "Student must NOT just write the final answer — the process must be shown",
         ],
-        "unlock_when": "Student has shown genuine step-by-step work with reasoning. Even if the attempt is strong immediately, always ask all 5 questions.",
-        "questions": 5,
+        "unlock_when": "Student has shown concrete step-by-step work with actual calculations, derivations, or logical steps written out in full. Vague answers, one-liners, questions back to the AI, and acknowledgements do NOT count. The student must have actually executed something — not just described it. Keep asking until real work is shown.",
+        "questions": 7,
         "question_targets": [
-            "Ask them to walk through their first step in detail",
-            "Ask them to explain the reasoning behind a specific calculation or inference",
-            "Ask what happens at the critical or most complex step",
-            "Ask if they got stuck anywhere and how they resolved it",
-            "Ask them to verify their answer makes sense given the original problem",
+            "Ask them to write out their very first concrete step with actual work shown",
+            "Ask them to show the calculation or derivation for the next step — not describe it, write it out",
+            "Ask what happens at the most critical or complex step — make them execute it fully",
+            "Ask them to show the full working for a specific part they have glossed over",
+            "Ask them to verify a specific step by checking it against the problem constraints",
+            "Ask if they got stuck anywhere and make them write out exactly where and why",
+            "Ask them to write the complete final answer with all steps leading to it shown",
         ],
     },
     "critique": {
         "objective": "Critically examine your own solution. Identify what could go wrong, edge cases it might fail on, assumptions you made, and whether there is a better approach.",
         "goal": "Student demonstrates they can think critically about their own work.",
         "rules": [
-            "Student must identify at least one weakness or assumption in their solution",
+            "Student must identify at least one specific weakness or assumption in their solution",
             "Student must think about edge cases — what inputs might break it",
             "Student must consider whether their solution is optimal",
             "Student must NOT just say it looks correct — genuine critical thinking required",
+            "Saying 'I think it is correct' or 'I cannot find any issues' does NOT unlock this stage",
         ],
-        "unlock_when": "Student has identified at least one real weakness, edge case, or improvement. Even if they critique well immediately, always ask all 5 questions.",
+        "unlock_when": "Student has identified at least one specific weakness, assumption, or edge case. Generic statements like 'it looks correct' do not unlock this stage — they must name something specific. Keep asking until a real weakness is identified.",
         "questions": 5,
         "question_targets": [
             "Ask what assumptions they made that might not always hold",
@@ -323,21 +450,20 @@ STAGE_DEFINITIONS = {
     },
     "reflection": {
         "objective": "Summarize what you learned from solving this problem. What is the key insight? How does this connect to what you already know? What will you remember?",
-        "goal": "Student consolidates learning and articulates the key takeaway in their own words.",
+        "goal": "Student consolidates learning and articulates a specific, genuine takeaway — not just a summary of what they did.",
         "rules": [
             "Student must state the core insight or lesson in their own words",
             "Student must connect this problem to a broader concept or pattern",
             "Student must NOT just summarize what they did — they must say what they LEARNED",
-            "Student must be specific — 'I learned recursion' is not enough",
+            "Student must be specific — 'I learned recursion' or 'I learned to think carefully' does not unlock this stage",
         ],
-        "unlock_when": "Student has articulated a specific, genuine insight. Even if they reflect well immediately, always ask all 5 questions.",
-        "questions": 5,
+        "unlock_when": "Student has articulated a specific insight beyond summarizing their steps — they must say what they now understand that they did not before. Vague statements like 'I learned to think step by step' do not unlock this stage. Keep asking until a genuine insight is expressed.",
+        "questions": 4,
         "question_targets": [
             "Ask what the single most important insight from this problem is",
             "Ask how this connects to other problems or concepts they have seen",
             "Ask what they would tell a friend who is stuck on a similar problem",
             "Ask what they found hardest and what made it click",
-            "Ask how they would recognize a similar problem in the future",
         ],
     },
 }
@@ -377,16 +503,17 @@ YOUR STATUS:
 - Your next question should target: {next_question_target}
 
 ABSOLUTE RULES — NEVER BREAK THESE:
-1. You MUST ask exactly {stage_info["questions"]} questions in this stage before setting understood to true — NO EXCEPTIONS
-2. Even if the student gives a perfect answer on the first try, you still ask all {stage_info["questions"]} questions
-3. Ask ONLY ONE question per response — never two questions at once
-4. Never give the answer or solve it for them
-5. If the student violates a stage rule redirect them firmly back to the stage objective
-6. If questions_remaining > 0 → understood MUST be false, no exceptions
-7. If questions_remaining = 0 AND student has engaged genuinely → understood = true
-8. Keep your message to 2-3 sentences maximum
-9. Briefly acknowledge what the student said then ask the next targeted question
-10. If this is a sub-part, reference what the student did in previous parts where relevant
+1. You MUST ask at least {stage_info["questions"]} questions before setting understood to true — this is a MINIMUM, not a maximum
+2. Even if the student gives a perfect answer, still ask all minimum questions
+3. After the minimum is reached, keep asking if the student has not genuinely demonstrated the stage objective
+4. Ask ONLY ONE question per response — never two at once
+5. Never give the answer or solve it for them
+6. If the student violates a stage rule redirect them firmly back to the stage objective
+7. If questions_remaining > 0 → understood MUST be false, no exceptions
+8. If questions_remaining = 0 AND student has genuinely demonstrated the unlock condition → understood = true
+9. If questions_remaining = 0 BUT student response is vague, incomplete, or a question → understood = false, keep asking
+10. Keep your message to 2-3 sentences maximum
+11. Briefly acknowledge what the student said then ask the next targeted question
 
 Respond ONLY with valid JSON:
 {{"message": "your response", "understood": false}}
@@ -540,9 +667,15 @@ async def get_problem_ai_guidance(
     else:
         parsed = {"message": "Could you explain your reasoning further?", "understood": False}
 
+    # Phase 1: enforce minimum question count — hard floor
     questions_after = questions_asked_in_stage + 1
-    if questions_after < STAGE_DEFINITIONS.get(body.stage, {}).get("questions", 5):
+    questions_needed = STAGE_DEFINITIONS.get(body.stage, {}).get("questions", 5)
+    if questions_after < questions_needed:
         parsed["understood"] = False
+    else:
+        # Phase 2: minimum reached — now check quality
+        if not is_genuine_understanding(body.stage, body.student_input):
+            parsed["understood"] = False
 
     client.table("AI_Interactions").insert({
         "question": body.student_input,
