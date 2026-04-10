@@ -1,17 +1,123 @@
 from fastapi import APIRouter, Security, UploadFile, File, Form, HTTPException
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, security
 from app.database import client
-from app.schemas import WorkspaceAIGuidanceRequest
 from google import genai
 from google.genai import types
+from anthropic import Anthropic
 import os
 import json
 import re
 import time
+from app.schemas import AIGuidanceRequest
 
 router = APIRouter()
 
-client_ai = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+claude_client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+
+GEMINI_MODELS = [
+    "models/gemini-2.5-flash",
+    "models/gemini-2.5-pro",
+    "models/gemini-3-flash-preview",
+    "models/gemini-3-pro-preview",
+    "models/gemini-flash-latest",
+    "models/gemini-2.5-flash-lite",
+]
+
+MAX_MESSAGES_PER_STAGE = {
+    "understand": 10,
+    "concept": 10,
+    "plan": 12,
+    "attempt": 20,
+    "critique": 12,
+    "reflection": 10,
+}
+
+
+def call_gemini_extraction(contents):
+    """Gemini only — used for PDF and image extraction."""
+    for model in GEMINI_MODELS:
+        for attempt in range(5):
+            try:
+                return gemini_client.models.generate_content(model=model, contents=contents)
+            except Exception as e:
+                err = str(e)
+                print(f"Model {model} attempt {attempt + 1} failed: {err}")
+                if "503" in err or "UNAVAILABLE" in err or "overloaded" in err.lower():
+                    wait = min(2 ** attempt, 16)
+                    print(f"Retrying in {wait}s...")
+                    time.sleep(wait)
+                    continue
+                if "404" in err or "NOT_FOUND" in err:
+                    break
+                time.sleep(1)
+    raise HTTPException(status_code=503, detail="Extraction service unavailable.")
+
+
+def call_guidance(prompt: str) -> str:
+    """Try Gemini first, fall back to Claude Haiku on failure."""
+    fast_models = [
+        "models/gemini-2.5-flash",
+        "models/gemini-2.5-pro",
+        "models/gemini-3-flash-preview",
+        "models/gemini-flash-latest",
+        "models/gemini-2.5-flash-lite",
+    ]
+    for model in fast_models:
+        for attempt in range(3):
+            try:
+                response = gemini_client.models.generate_content(model=model, contents=prompt)
+                print(f"Guidance served by Gemini: {model}")
+                return response.text
+            except Exception as e:
+                err = str(e)
+                if "503" in err or "UNAVAILABLE" in err or "overloaded" in err.lower():
+                    wait = min(2 ** attempt, 8)
+                    print(f"Retrying in {wait}s...")
+                    time.sleep(wait)
+                    continue
+                if "404" in err or "NOT_FOUND" in err:
+                    break
+                time.sleep(1)
+
+    # Gemini failed — fall back to Claude Haiku
+    print("Gemini unavailable — falling back to Claude Haiku")
+    try:
+        message = claude_client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=600,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return message.content[0].text
+    except Exception as e:
+        print(f"Claude fallback failed: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail="AI service temporarily unavailable. Please try again."
+        )
+
+
+def call_summary(prompt: str) -> str:
+    """Always use Claude Sonnet for summary generation."""
+    try:
+        message = claude_client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=1500,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return message.content[0].text
+    except Exception as e:
+        print(f"Claude Sonnet failed, trying Haiku: {e}")
+        try:
+            message = claude_client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=1500,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return message.content[0].text
+        except Exception as e2:
+            raise HTTPException(status_code=503, detail="Summary service unavailable.")
+
 
 LATEX_RULES = """LATEX CONVERSION RULES — apply every single one:
 
@@ -59,76 +165,16 @@ DISPLAY MATH: Standalone equations use $$...$$
 INLINE MATH: Math within sentences uses $...$"""
 
 
-MODELS = [
-    "models/gemini-2.5-flash",
-    "models/gemini-2.0-flash",
-    "models/gemini-2.5-pro",
-    "models/gemini-3-flash-preview",
-    "models/gemini-3-pro-preview",
-    "models/gemini-flash-latest",
-    "models/gemini-2.5-flash-lite",
-]
-
-
-def call_gemini(contents, retries=5):
-    for model in MODELS:
-        for attempt in range(retries):
-            try:
-                return client_ai.models.generate_content(model=model, contents=contents)
-            except Exception as e:
-                err = str(e)
-                print(f"Model {model} attempt {attempt + 1} failed: {err}")
-                if "503" in err or "UNAVAILABLE" in err or "overloaded" in err.lower():
-                    wait = min(2 ** attempt, 16)
-                    print(f"Retrying in {wait}s...")
-                    time.sleep(wait)
-                    continue
-                if "404" in err or "NOT_FOUND" in err:
-                    break
-                time.sleep(1)
-    raise HTTPException(
-        status_code=503,
-        detail="AI service temporarily unavailable. Please try again in a moment."
-    )
-
-
-def call_gemini_fast(contents):
-    """Lightweight call for quality checks — shorter timeout, fewer retries."""
-    fast_models = [
-        "models/gemini-2.5-flash",
-        "models/gemini-2.0-flash",
-        "models/gemini-flash-latest",
-        "models/gemini-2.5-flash-lite",
-    ]
-    for model in fast_models:
-        for attempt in range(3):
-            try:
-                return client_ai.models.generate_content(model=model, contents=contents)
-            except Exception as e:
-                err = str(e)
-                if "503" in err or "UNAVAILABLE" in err:
-                    wait = min(2 ** attempt, 8)
-                    time.sleep(wait)
-                    continue
-                if "404" in err or "NOT_FOUND" in err:
-                    break
-                time.sleep(1)
-    return None
-
-
 def parse_problems_from_response(text: str) -> list[dict]:
     text = re.sub(r'```json\s*', '', text)
     text = re.sub(r'```\s*', '', text)
     text = text.strip()
-
     start = text.find('[')
     end = text.rfind(']') + 1
     if start == -1 or end == 0:
         return []
-
     json_text = text[start:end]
     json_text = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', json_text)
-
     try:
         problems = json.loads(json_text)
     except json.JSONDecodeError:
@@ -139,10 +185,8 @@ def parse_problems_from_response(text: str) -> list[dict]:
         except json.JSONDecodeError as e:
             print(f"JSON parse failed after cleaning: {e}")
             return []
-
     if not isinstance(problems, list) or len(problems) == 0:
         return []
-
     valid = []
     for i, p in enumerate(problems):
         if isinstance(p, dict):
@@ -162,7 +206,7 @@ CRITICAL RULES:
 3. Each problem MUST be its own SEPARATE entry — NEVER merge multiple problems together
 4. Count the problems carefully — if you see PROBLEM 1, PROBLEM 2, PROBLEM 3, PROBLEM 4 return exactly 4 entries
 5. Sub-parts (a), (b), (c) go in the "parts" array of their parent problem
-6. Include ALL text within each problem including definitions, algorithms, or context given for that specific problem
+6. Include ALL text within each problem including definitions, algorithms, or context for that specific problem
 
 {LATEX_RULES}
 
@@ -189,7 +233,7 @@ REMINDER: Skip headers and instructions. Only extract actual problems. Each prob
 def extract_and_structure_from_pdf(file_bytes: bytes) -> list[dict]:
     for attempt in range(3):
         try:
-            response = call_gemini([
+            response = call_gemini_extraction([
                 types.Part.from_bytes(data=file_bytes, mime_type="application/pdf"),
                 EXTRACTION_PROMPT
             ])
@@ -211,7 +255,7 @@ def extract_and_structure_from_pdf(file_bytes: bytes) -> list[dict]:
 def extract_and_structure_from_image(file_bytes: bytes, mime_type: str) -> list[dict]:
     for attempt in range(3):
         try:
-            response = call_gemini([
+            response = call_gemini_extraction([
                 types.Part.from_bytes(data=file_bytes, mime_type=mime_type),
                 EXTRACTION_PROMPT
             ])
@@ -219,9 +263,6 @@ def extract_and_structure_from_image(file_bytes: bytes, mime_type: str) -> list[
             if problems:
                 print(f"Extracted {len(problems)} problems from image")
                 return problems
-            time.sleep(2)
-        except json.JSONDecodeError as e:
-            print(f"JSON error on attempt {attempt + 1}: {e}")
             time.sleep(2)
         except Exception as e:
             print(f"Image extraction error on attempt {attempt + 1}: {e}")
@@ -236,7 +277,6 @@ CRITICAL RULES:
 1. Every distinct numbered problem MUST be its own SEPARATE entry
 2. NEVER merge multiple problems into one entry
 3. Sub-parts (a), (b), (c) go in the parts array
-4. Count problems carefully before writing JSON
 
 {LATEX_RULES}
 
@@ -259,7 +299,7 @@ Return ONLY the JSON array."""
 
     for attempt in range(3):
         try:
-            response = call_gemini(prompt)
+            response = call_gemini_extraction(prompt)
             problems = parse_problems_from_response(response.text)
             if problems:
                 return problems
@@ -268,6 +308,69 @@ Return ONLY the JSON array."""
             print(f"Text extraction error attempt {attempt + 1}: {e}")
             time.sleep(2)
     return [{"problem_number": 1, "main_text": raw_text[:3000], "parts": []}]
+
+
+def build_history_text(conversation_history: list, current_stage: str) -> tuple[str, int]:
+    """Build trimmed history and count questions in current stage."""
+    history_text = ""
+    questions_asked_in_stage = 0
+    current_stage_messages = []
+    previous_stage_student_messages = []
+
+    for msg in conversation_history:
+        role = msg.get("role", "student")
+        content = msg.get("content", "")
+        stage = msg.get("stage", "unknown")
+        if not content:
+            continue
+        if role == "system":
+            history_text += f"\n{content}"
+            continue
+        if stage == current_stage:
+            current_stage_messages.append(msg)
+            if role == "ai":
+                questions_asked_in_stage += 1
+        else:
+            if role == "student":
+                previous_stage_student_messages.append(msg)
+
+    for msg in previous_stage_student_messages:
+        stage_label = msg.get("stage", "unknown").upper()
+        history_text += f"\n[{stage_label}] Student: {msg.get('content', '')}"
+
+    for msg in current_stage_messages[-8:]:
+        role = msg.get("role", "student")
+        content = msg.get("content", "")
+        stage_label = msg.get("stage", "unknown").upper()
+        role_label = "Student" if role == "student" else "ThinkTrace AI"
+        history_text += f"\n[{stage_label}] {role_label}: {content}"
+
+    return history_text, questions_asked_in_stage
+
+
+def parse_guidance_response(text: str) -> dict:
+    """Parse AI guidance response — handles both Gemini and Claude output."""
+    text = text.strip()
+    text = re.sub(r'```json\n?', '', text)
+    text = re.sub(r'```\n?', '', text)
+    text = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', text)
+
+    match = re.search(r'\{.*\}', text, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group())
+        except json.JSONDecodeError:
+            pass
+
+    msg_match = re.search(r'"message"\s*:\s*"(.*?)"(?=\s*[,}])', text, re.DOTALL)
+    understood_match = re.search(r'"understood"\s*:\s*(true|false)', text)
+    if msg_match:
+        return {
+            "message": msg_match.group(1),
+            "understood": understood_match.group(1) == "true" if understood_match else False
+        }
+
+    return {"message": "Keep working through this step.", "understood": False}
 
 
 STAGE_DEFINITIONS = {
@@ -281,7 +384,7 @@ STAGE_DEFINITIONS = {
             "Student must identify any constraints or special conditions",
             "Student must NOT attempt to solve yet — this is comprehension only",
         ],
-        "unlock_when": "Student has restated the problem in their own words AND identified what is given AND identified what is asked AND noted at least one constraint. All four components must be present — partial answers do not unlock this stage.",
+        "unlock_when": "Student has restated the problem in their own words AND identified what is given AND identified what is asked AND noted at least one constraint. All components must be present — partial answers do not unlock this stage.",
         "questions": 4,
         "question_targets": [
             "Ask them to restate the problem in their own words",
@@ -300,7 +403,7 @@ STAGE_DEFINITIONS = {
             "Student must NOT start planning steps yet — this is identification only",
             "Saying just a concept name with no justification does NOT unlock this stage",
         ],
-        "unlock_when": "Student has named a specific concept AND explained why it applies to THIS problem specifically. A concept name alone without justification does not count. Vague answers like 'recursion' or 'induction' with no explanation of why do not unlock this stage.",
+        "unlock_when": "Student has named a specific concept AND explained why it applies to THIS problem specifically. A concept name alone without justification does not count.",
         "questions": 4,
         "question_targets": [
             "Ask what type of problem this is (sorting, graph, recursion, proof, etc.)",
@@ -320,7 +423,7 @@ STAGE_DEFINITIONS = {
             "Plan must cover the full solution from start to finish",
             "Vague plans like 'I will solve it step by step' do NOT unlock this stage",
         ],
-        "unlock_when": "Student has written a numbered plan with at least 3 specific actionable steps that logically cover the full solution. Vague descriptions, one-step plans, and plans that just restate the problem do not unlock this stage.",
+        "unlock_when": "Student has written a numbered plan with at least 3 specific actionable steps that logically cover the full solution. Vague one-liners do not unlock this stage.",
         "questions": 5,
         "question_targets": [
             "Ask them to write out their first step specifically",
@@ -342,7 +445,7 @@ STAGE_DEFINITIONS = {
             "Mistakes are allowed — genuine work with errors is better than no work",
             "Student must follow their plan from the previous stage",
         ],
-        "unlock_when": "Student has shown concrete step-by-step work with actual calculations, derivations, or logical steps written out in full. Vague answers, one-liners, questions back to the AI, and acknowledgements do NOT count. The student must have actually executed something — not just described it.",
+        "unlock_when": "Student has shown concrete step-by-step work with actual calculations, derivations, or logical steps written out in full. Vague answers, one-liners, questions back to the AI do NOT count.",
         "questions": 7,
         "question_targets": [
             "Ask them to write out their very first concrete step with actual work shown",
@@ -364,7 +467,7 @@ STAGE_DEFINITIONS = {
             "Student must NOT just say it looks correct — genuine critical thinking required",
             "Saying 'I think it is correct' or 'I cannot find any issues' does NOT unlock this stage",
         ],
-        "unlock_when": "Student has identified at least one specific weakness, assumption, or edge case in their solution. Generic statements like 'it looks correct' or 'I think it works' do not unlock this stage — they must name something specific that could fail or be improved.",
+        "unlock_when": "Student has identified at least one specific weakness, assumption, or edge case. Generic statements like 'it looks correct' do not unlock this stage.",
         "questions": 5,
         "question_targets": [
             "Ask what assumptions they made that might not always hold",
@@ -383,7 +486,7 @@ STAGE_DEFINITIONS = {
             "Student must NOT just summarize what they did — they must say what they LEARNED",
             "Student must be specific — 'I learned recursion' or 'I learned to think carefully' does not unlock this stage",
         ],
-        "unlock_when": "Student has articulated a specific insight that goes beyond summarizing their steps — they must say what they now understand that they did not before, or how this connects to a broader pattern. Vague statements like 'I learned to think step by step' do not unlock this stage.",
+        "unlock_when": "Student has articulated a specific insight beyond summarizing their steps — they must say what they now understand that they did not before.",
         "questions": 4,
         "question_targets": [
             "Ask what the single most important insight from this problem is",
@@ -395,20 +498,12 @@ STAGE_DEFINITIONS = {
 }
 
 
-def build_ai_prompt(mode: str, problem: str, stage: str, student_input: str, history_text: str, questions_asked: int) -> str:
+def build_ai_prompt(problem: str, stage: str, student_input: str, history_text: str, questions_asked: int) -> str:
     stage_info = STAGE_DEFINITIONS.get(stage, STAGE_DEFINITIONS["understand"])
     questions_remaining = max(0, stage_info["questions"] - questions_asked)
     next_question_target = stage_info["question_targets"][min(questions_asked, len(stage_info["question_targets"]) - 1)]
 
-    if mode == "deep_focus":
-        return f"""You are a strict academic coach. Deep focus mode — no AI assistance.
-Problem: {problem}
-Stage: {stage}
-Student input: {student_input}
-Respond ONLY with this JSON:
-{{"message": "Deep focus mode is active. Work through this independently.", "understood": false}}"""
-
-    base = f"""You are a Socratic tutor guiding a student through a structured academic reasoning process.
+    return f"""You are a Socratic tutor guiding a student through a structured academic reasoning process.
 
 PROBLEM: {problem}
 
@@ -420,14 +515,8 @@ UNLOCK CONDITION: {stage_info["unlock_when"]}
 STAGE RULES (enforce strictly):
 {chr(10).join(f"- {r}" for r in stage_info["rules"])}
 
-FULL CONVERSATION HISTORY (all stages and all previous parts):
+CONVERSATION HISTORY:
 {history_text if history_text else "(none)"}
-
-NOTE: Messages labeled [STAGE] show which stage they came from.
-Lines starting with "---" are separators between different problem parts.
-Count only YOUR messages labeled [{stage.upper()}] to determine questions asked in this stage.
-Use the full history to avoid repeating questions and build on what the student already demonstrated.
-If this is a sub-part, reference what the student did in previous parts where relevant.
 
 STUDENT'S LATEST RESPONSE: {student_input}
 
@@ -437,118 +526,37 @@ YOUR STATUS:
 - Your next question should target: {next_question_target}
 
 ABSOLUTE RULES — NEVER BREAK THESE:
-1. You MUST ask at least {stage_info["questions"]} questions in this stage — this is a MINIMUM, not a maximum
-2. Even if the student gives a perfect answer on the first try, you still ask all {stage_info["questions"]} questions
-3. After the minimum is reached, keep asking until the student has GENUINELY demonstrated the stage objective
-4. Ask ONLY ONE question per response — never two questions at once
+1. You MUST ask at least {stage_info["questions"]} questions before setting understood to true — this is a MINIMUM, not a maximum
+2. Even if the student gives a perfect answer, still ask all minimum questions
+3. After the minimum is reached, keep asking if the student has not genuinely demonstrated the stage objective
+4. Ask ONLY ONE question per response — never two at once
 5. Never give the answer or solve it for them
 6. If the student violates a stage rule redirect them firmly back to the stage objective
 7. If questions_remaining > 0 → understood MUST be false, no exceptions
 8. If questions_remaining = 0 AND student has genuinely demonstrated the unlock condition → understood = true
-9. If questions_remaining = 0 BUT student has NOT genuinely demonstrated the unlock condition → keep asking, understood = false
+9. If questions_remaining = 0 BUT student response is vague, incomplete, or a question → understood = false, keep asking
 10. Keep your message to 2-3 sentences maximum
-11. Briefly acknowledge what the student said then ask the next targeted question"""
-
-    suffix = f"""
+11. Briefly acknowledge what the student said then ask the next targeted question
 
 Respond ONLY with valid JSON:
 {{"message": "your response", "understood": false}}
 
-CRITICAL JSON FORMATTING: Double-escape LaTeX: \\\\frac not \\frac. Wrap ALL math in $ delimiters."""
-
-    if mode == "open":
-        return base + "\nIn open mode you can explain concepts and give examples but do not hand them the answer. Be warm and encouraging." + suffix
-    return base + suffix
-
-
-def is_genuine_understanding(stage: str, student_input: str, history_text: str = "", problem: str = "") -> bool:
-    """
-    Use Gemini to evaluate whether the student has genuinely demonstrated
-    understanding for this stage based on the full conversation history.
-    Falls back to True on error so students are never permanently stuck
-    due to AI service issues.
-    """
-    stage_upper = stage.upper()
-
-    # Extract all student messages from this stage
-    stage_student_text = ""
-    for line in history_text.split("\n"):
-        if f"[{stage_upper}] Student:" in line:
-            stage_student_text += " " + line.split(f"[{stage_upper}] Student:")[-1]
-
-    full_student_work = (stage_student_text + " " + student_input).strip()
-
-    # If there's barely anything written, don't bother calling Gemini
-    if len(full_student_work.split()) < 8:
-        return False
-
-    stage_criteria = {
-        "understand": "The student has restated the problem in their own words, identified what is given, identified what is being asked, and noted at least one constraint or condition.",
-        "concept": "The student has named at least one specific concept, theorem, or technique AND explained why it applies to this specific problem. Naming a concept without justification does not count.",
-        "plan": "The student has written a numbered step-by-step plan with at least 3 specific actionable steps that logically cover the full solution. Vague descriptions do not count.",
-        "attempt": "The student has shown concrete step-by-step work with actual calculations, derivations, or logical steps written out. Vague descriptions, one-liners, and questions back to the AI do not count.",
-        "critique": "The student has identified at least one specific weakness, assumption, or edge case in their solution. Generic statements like 'it looks correct' do not count.",
-        "reflection": "The student has articulated a specific insight about what they learned — not just a summary of what they did. Vague statements like 'I learned to think carefully' do not count.",
-    }
-
-    criteria = stage_criteria.get(stage, "The student has genuinely engaged with the stage objective.")
-
-    prompt = f"""You are evaluating whether a student has genuinely completed the {stage.upper()} stage of a structured reasoning exercise.
-
-PROBLEM: {problem}
-
-STAGE CRITERIA:
-{criteria}
-
-STUDENT'S FULL WORK FOR THIS STAGE:
-{full_student_work}
-
-Has the student genuinely met the criteria above based on their full work shown?
-
-Reply ONLY with valid JSON — nothing else, no explanation:
-{{"passed": true}} if they have genuinely met the criteria
-{{"passed": false}} if they have not"""
-
-    try:
-        response = call_gemini_fast(prompt)
-        if response is None:
-            print(f"Quality check skipped — Gemini unavailable, defaulting to True")
-            return True
-        text = response.text.strip()
-        text = re.sub(r'```json\s*', '', text)
-        text = re.sub(r'```\s*', '', text)
-        match = re.search(r'\{.*\}', text, re.DOTALL)
-        if match:
-            result = json.loads(match.group())
-            passed = result.get("passed", False)
-            print(f"Stage {stage} quality check: {'PASSED' if passed else 'FAILED'}")
-            return bool(passed)
-    except Exception as e:
-        print(f"Quality check error, defaulting to True: {e}")
-        return True
-
-    return True
+CRITICAL JSON FORMATTING: Double-escape LaTeX backslashes: \\\\frac not \\frac. Wrap ALL math in $ delimiters."""
 
 
 # ── Routes ───────────────────────────────────────────────────────────────────
 
-@router.post('/workspaces')
-async def create_workspace(
+@router.post('/courses/{course_id}/assignments')
+async def create_assignment(
+    course_id: str,
     title: str = Form(...),
-    mode: str = Form("guided"),
     source_type: str = Form(...),
     raw_text: str = Form(None),
     file: UploadFile = File(None),
-    subject: str = Form(None),
-    term_type: str = Form(None),
-    term_name: str = Form(None),
-    term_year: int = Form(None),
     current_user=Security(get_current_user)
 ):
-    if mode not in ("deep_focus", "guided", "open"):
-        raise HTTPException(status_code=400, detail="Invalid mode")
     if source_type not in ("pdf", "image", "text"):
-        raise HTTPException(status_code=400, detail="Invalid source_type")
+        raise HTTPException(status_code=400, detail="source_type must be pdf, image, or text")
 
     problems = []
 
@@ -565,21 +573,19 @@ async def create_workspace(
             raise HTTPException(status_code=400, detail="File required")
         problems = extract_and_structure_from_image(await file.read(), file.content_type or "image/jpeg")
 
-    workspace = client.table("Personal_Workspaces").insert({
-        "user_id": current_user["id"],
+    assignment = client.table("Assignments").insert({
+        "course_id": course_id,
         "title": title,
-        "mode": mode,
-        "subject": subject,
-        "term_type": term_type,
-        "term_name": term_name,
-        "term_year": term_year,
+        "uploaded_by": current_user["id"],
+        "source_type": source_type,
+        "raw_text": "",
     }).execute()
 
-    workspace_id = workspace.data[0]["id"]
+    assignment_id = assignment.data[0]["id"]
 
     for prob in problems:
-        problem_row = client.table("Workspace_Problems").insert({
-            "workspace_id": workspace_id,
+        problem_row = client.table("Problems").insert({
+            "assignment_id": assignment_id,
             "problem_number": prob["problem_number"],
             "problem_text": prob["main_text"],
         }).execute()
@@ -596,149 +602,171 @@ async def create_workspace(
                 }
                 for i, p in enumerate(prob["parts"])
             ]
-            client.table("Workspace_Problem_Parts").insert(part_rows).execute()
+            client.table("Problem_Parts").insert(part_rows).execute()
 
     return {
-        "workspace": workspace.data[0],
+        "assignment": assignment.data[0],
         "problem_count": len(problems)
     }
 
 
-@router.get('/workspaces')
-async def get_workspaces(current_user=Security(get_current_user)):
-    workspaces = client.table("Personal_Workspaces") \
-        .select("*") \
-        .eq("user_id", current_user["id"]) \
-        .order("created_at", desc=True) \
-        .execute()
-    return workspaces.data
+@router.get('/courses/{course_id}/assignments')
+async def get_assignments(course_id: str, current_user=Security(get_current_user)):
+    assignments = client.table("Assignments").select("*").eq("course_id", course_id).execute()
+    return assignments.data
 
 
-@router.get('/workspaces/{workspace_id}')
-async def get_workspace(workspace_id: str, current_user=Security(get_current_user)):
-    workspace = client.table("Personal_Workspaces") \
-        .select("*") \
-        .eq("id", workspace_id) \
-        .eq("user_id", current_user["id"]) \
-        .execute()
-    if not workspace.data:
-        raise HTTPException(status_code=404, detail="Workspace not found")
+@router.get('/assignments/{assignment_id}')
+async def get_assignment(assignment_id: str, current_user=Security(get_current_user)):
+    assignment = client.table("Assignments").select("*").eq("id", assignment_id).execute()
+    if not assignment.data:
+        raise HTTPException(status_code=404, detail="Assignment not found")
 
-    problems = client.table("Workspace_Problems") \
-        .select("*") \
-        .eq("workspace_id", workspace_id) \
-        .order("problem_number") \
-        .execute()
+    problems = client.table("Problems").select("*").eq("assignment_id", assignment_id).order("problem_number").execute()
 
     result_problems = []
     for p in problems.data:
-        parts = client.table("Workspace_Problem_Parts").select("*").eq("problem_id", p["id"]).order("part_number").execute()
+        parts = client.table("Problem_Parts").select("*").eq("problem_id", p["id"]).order("part_number").execute()
         result_problems.append({**p, "parts": parts.data})
 
-    return {**workspace.data[0], "problems": result_problems}
+    return {**assignment.data[0], "problems": result_problems}
 
 
-@router.post('/workspaces/{workspace_id}/problems/{problem_id}/ai-guidance')
-async def workspace_ai_guidance(
-    workspace_id: str,
+@router.post('/problems/{problem_id}/ai-guidance')
+async def get_problem_ai_guidance(
     problem_id: str,
-    body: WorkspaceAIGuidanceRequest,
+    body: AIGuidanceRequest,
     current_user=Security(get_current_user)
 ):
-    history_text = ""
-    questions_asked_in_stage = 0
-    for msg in body.conversation_history:
-        role = msg.get("role", "student")
-        content = msg.get("content", "")
-        if not content:
-            continue
-        if role == "system":
-            history_text += f"\n{content}"
-            continue
-        role_label = "Student" if role == "student" else "ThinkTrace AI"
-        stage_label = msg.get("stage", "unknown").upper()
-        history_text += f"\n[{stage_label}] {role_label}: {content}"
-        if role == "ai" and msg.get("stage") == body.stage:
-            questions_asked_in_stage += 1
+    problem = client.table("Problems").select("*").eq("id", problem_id).execute()
+    if not problem.data:
+        raise HTTPException(status_code=404, detail="Problem not found")
+
+    problem_text = problem.data[0]["problem_text"]
+
+    # Check message cap
+    student_messages_in_stage = sum(
+        1 for msg in body.conversation_history
+        if msg.get("role") == "student" and msg.get("stage") == body.stage
+    )
+    max_allowed = MAX_MESSAGES_PER_STAGE.get(body.stage, 15)
+    if student_messages_in_stage >= max_allowed:
+        return {
+            "message": "You've reached the maximum exchanges for this stage. Review what you've written and continue to the next stage.",
+            "understood": True
+        }
+
+    # Build trimmed history
+    history_text, questions_asked_in_stage = build_history_text(
+        body.conversation_history, body.stage
+    )
 
     prompt = build_ai_prompt(
-        body.mode,
-        body.problem,
+        problem_text,
         body.stage,
         body.student_input,
         history_text,
         questions_asked_in_stage
     )
 
-    response = call_gemini(prompt)
+    raw_text = call_guidance(prompt)
+    parsed = parse_guidance_response(raw_text)
 
-    text = response.text.strip()
-    text = re.sub(r'```json\n?', '', text)
-    text = re.sub(r'```\n?', '', text)
-    text = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', text)
-
-    match = re.search(r'\{.*\}', text, re.DOTALL)
-    if match:
-        try:
-            parsed = json.loads(match.group())
-        except json.JSONDecodeError:
-            parsed = {"message": "Keep working through this step.", "understood": False}
-    else:
-        parsed = {"message": "Keep working through this step.", "understood": False}
-
-    # Phase 1: enforce minimum question count — hard floor
+    # Enforce minimum question count
     questions_after = questions_asked_in_stage + 1
     questions_needed = STAGE_DEFINITIONS.get(body.stage, {}).get("questions", 5)
     if questions_after < questions_needed:
         parsed["understood"] = False
-    else:
-        # Phase 2: minimum reached — Gemini evaluates genuine understanding
-        if not is_genuine_understanding(body.stage, body.student_input, history_text, body.problem):
-            parsed["understood"] = False
+
+    client.table("AI_Interactions").insert({
+        "question": body.student_input,
+        "rewritten_prompt": prompt,
+        "response": parsed["message"],
+        "intervention_level": 2,
+        "allowed_mode": "socratic",
+        "ai_model": "gemini-2.5-flash"
+    }).execute()
 
     return parsed
 
 
-@router.post('/workspace-problems/{problem_id}/traces')
-async def create_workspace_trace(
-    problem_id: str,
-    body: dict,
+@router.post('/assignments/{assignment_id}/problems')
+async def add_problems(
+    assignment_id: str,
+    source_type: str = Form(...),
+    raw_text: str = Form(None),
+    file: UploadFile = File(None),
     current_user=Security(get_current_user)
 ):
-    problem = client.table("Workspace_Problems").select("id").eq("id", problem_id).execute()
-    if not problem.data:
-        raise HTTPException(status_code=404, detail="Problem not found")
+    if source_type not in ("pdf", "image", "text"):
+        raise HTTPException(status_code=400, detail="Invalid source_type")
 
-    trace = client.table("Workspace_Traces").insert({
-        "problem_id": problem_id,
-        "user_id": current_user["id"],
-        "stage": body.get("stage"),
-        "action": body.get("action"),
-        "content": body.get("content"),
-    }).execute()
+    problems = []
+    if source_type == "text":
+        if not raw_text:
+            raise HTTPException(status_code=400, detail="raw_text required")
+        problems = extract_problems_structured(raw_text)
+    elif source_type == "pdf":
+        if not file:
+            raise HTTPException(status_code=400, detail="File required")
+        problems = extract_and_structure_from_pdf(await file.read())
+    elif source_type == "image":
+        if not file:
+            raise HTTPException(status_code=400, detail="File required")
+        problems = extract_and_structure_from_image(await file.read(), file.content_type)
 
-    return trace.data[0]
+    existing = client.table("Problems") \
+        .select("problem_number") \
+        .eq("assignment_id", assignment_id) \
+        .order("problem_number", desc=True) \
+        .limit(1) \
+        .execute()
+
+    start_index = existing.data[0]["problem_number"] if existing.data else 0
+
+    for i, prob in enumerate(problems):
+        problem_row = client.table("Problems").insert({
+            "assignment_id": assignment_id,
+            "problem_number": start_index + i + 1,
+            "problem_text": prob["main_text"],
+        }).execute()
+
+        problem_id = problem_row.data[0]["id"]
+
+        if prob.get("parts"):
+            part_rows = [
+                {
+                    "problem_id": problem_id,
+                    "part_label": p["label"],
+                    "part_text": p["text"],
+                    "part_number": j + 1,
+                }
+                for j, p in enumerate(prob["parts"])
+            ]
+            client.table("Problem_Parts").insert(part_rows).execute()
+
+    return {"added_count": len(problems)}
 
 
-@router.get('/workspace-problems/{problem_id}')
-async def get_workspace_problem(problem_id: str, current_user=Security(get_current_user)):
-    problem = client.table("Workspace_Problems").select("*").eq("id", problem_id).execute()
+@router.get('/problems/{problem_id}')
+async def get_problem(problem_id: str, current_user=Security(get_current_user)):
+    problem = client.table("Problems").select("*").eq("id", problem_id).execute()
     if not problem.data:
         raise HTTPException(status_code=404, detail="Problem not found")
 
     p = problem.data[0]
-    parts = client.table("Workspace_Problem_Parts").select("*").eq("problem_id", problem_id).order("part_number").execute()
+    parts = client.table("Problem_Parts").select("*").eq("problem_id", problem_id).order("part_number").execute()
 
-    siblings = client.table("Workspace_Problems") \
+    siblings = client.table("Problems") \
         .select("id, problem_number, problem_text") \
-        .eq("workspace_id", p["workspace_id"]) \
+        .eq("assignment_id", p["assignment_id"]) \
         .order("problem_number") \
         .execute()
 
     sibling_ids = [s["id"] for s in siblings.data if s["problem_number"] < p["problem_number"]]
     sibling_traces = []
     for sid in sibling_ids:
-        traces = client.table("Workspace_Traces") \
+        traces = client.table("Traces") \
             .select("*") \
             .eq("problem_id", sid) \
             .eq("user_id", current_user["id"]) \
@@ -758,92 +786,3 @@ async def get_workspace_problem(problem_id: str, current_user=Security(get_curre
         "siblings": siblings.data,
         "sibling_traces": sibling_traces
     }
-
-
-@router.delete('/workspaces/{workspace_id}')
-async def delete_workspace(workspace_id: str, current_user=Security(get_current_user)):
-    workspace = client.table("Personal_Workspaces").select("id").eq("id", workspace_id).eq("user_id", current_user["id"]).execute()
-    if not workspace.data:
-        raise HTTPException(status_code=404, detail="Workspace not found")
-
-    problems = client.table("Workspace_Problems").select("id").eq("workspace_id", workspace_id).execute()
-    for p in problems.data:
-        client.table("Workspace_Traces").delete().eq("problem_id", p["id"]).execute()
-        client.table("Workspace_Problem_Parts").delete().eq("problem_id", p["id"]).execute()
-    client.table("Workspace_Problems").delete().eq("workspace_id", workspace_id).execute()
-    client.table("Personal_Workspaces").delete().eq("id", workspace_id).execute()
-
-    return {"deleted": True}
-
-
-@router.post('/workspace-problems/{problem_id}/summary')
-async def generate_problem_summary(
-    problem_id: str,
-    body: dict,
-    current_user=Security(get_current_user)
-):
-    problem = client.table("Workspace_Problems").select("*").eq("id", problem_id).execute()
-    if not problem.data:
-        raise HTTPException(status_code=404, detail="Problem not found")
-
-    problem_text = problem.data[0]["problem_text"]
-    conversation_history = body.get("conversation_history", [])
-
-    history_text = ""
-    for msg in conversation_history:
-        role = msg.get("role", "")
-        content = msg.get("content", "")
-        stage = msg.get("stage", "")
-        if not content or role == "system":
-            continue
-        role_label = "Student" if role == "student" else "ThinkTrace AI"
-        history_text += f"\n[{stage.upper()}] {role_label}: {content}"
-
-    prompt = f"""You are an insightful academic coach reviewing a student's complete reasoning trace for a problem.
-
-PROBLEM: {problem_text}
-
-STUDENT'S FULL REASONING TRACE:
-{history_text}
-
-Generate a structured JSON summary of this student's reasoning journey. Be specific, insightful, and genuinely helpful. Reference what they actually wrote.
-
-Return ONLY valid JSON in this exact format:
-{{
-  "stage_insights": {{
-    "understand": "2-3 sentence insight about how well they understood the problem.",
-    "concept": "2-3 sentence insight about their conceptual reasoning.",
-    "plan": "2-3 sentence insight about their planning.",
-    "attempt": "2-3 sentence insight about their execution.",
-    "critique": "2-3 sentence insight about their critical thinking.",
-    "reflection": "2-3 sentence insight about their reflection."
-  }},
-  "key_insight": "The single most important thing this student demonstrated or learned. Be specific.",
-  "strongest_stage": "understand|concept|plan|attempt|critique|reflection",
-  "weakest_stage": "understand|concept|plan|attempt|critique|reflection",
-  "growth_note": "One specific actionable thing this student should focus on to improve.",
-  "overall_score": 7
-}}
-
-overall_score is 1-10 based on depth, genuine engagement, and quality of reasoning."""
-
-    response = call_gemini(prompt)
-    text = response.text.strip()
-    text = re.sub(r'```json\n?', '', text)
-    text = re.sub(r'```\n?', '', text)
-
-    match = re.search(r'\{.*\}', text, re.DOTALL)
-    if match:
-        try:
-            summary = json.loads(match.group())
-        except json.JSONDecodeError:
-            summary = {"key_insight": "Unable to generate summary.", "stage_insights": {}, "overall_score": 0, "growth_note": "", "strongest_stage": "", "weakest_stage": ""}
-    else:
-        summary = {"key_insight": "Unable to generate summary.", "stage_insights": {}, "overall_score": 0, "growth_note": "", "strongest_stage": "", "weakest_stage": ""}
-
-    client.table("Workspace_Problems").update({
-        "ai_summary": json.dumps(summary),
-        "summary_generated_at": "now()",
-    }).eq("id", problem_id).execute()
-
-    return summary
