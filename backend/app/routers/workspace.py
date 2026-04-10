@@ -24,15 +24,6 @@ GEMINI_MODELS = [
     "models/gemini-2.5-flash-lite",
 ]
 
-MAX_MESSAGES_PER_STAGE = {
-    "understand": 10,
-    "concept": 10,
-    "plan": 12,
-    "attempt": 20,
-    "critique": 12,
-    "reflection": 10,
-}
-
 
 def call_gemini_extraction(contents):
     for model in GEMINI_MODELS:
@@ -82,7 +73,7 @@ def call_guidance(prompt: str) -> str:
     try:
         message = claude_client.messages.create(
             model="claude-haiku-4-5-20251001",
-            max_tokens=600,
+            max_tokens=1000,
             messages=[{"role": "user", "content": prompt}]
         )
         return message.content[0].text
@@ -308,6 +299,13 @@ Return ONLY the JSON array."""
 
 
 def build_history_text(conversation_history: list, current_stage: str) -> tuple[str, int]:
+    """
+    Smart history trimming:
+    - Keeps ALL student messages from current stage
+    - Keeps last 4 AI messages from current stage only
+    - Keeps ALL student messages from previous stages
+    - Drops all AI messages from previous stages
+    """
     history_text = ""
     questions_asked_in_stage = 0
     current_stage_student_messages = []
@@ -519,6 +517,9 @@ def build_ai_prompt(mode: str, problem: str, stage: str, student_input: str, his
     questions_remaining = max(0, stage_info["questions"] - questions_asked)
     next_question_target = stage_info["question_targets"][min(questions_asked, len(stage_info["question_targets"]) - 1)]
 
+    HINT_THRESHOLD = 15
+    is_hint_mode = questions_asked >= HINT_THRESHOLD
+
     if mode == "deep_focus":
         return f"""You are a strict academic coach. Deep focus mode — no AI assistance.
 Problem: {problem}
@@ -526,6 +527,24 @@ Stage: {stage}
 Student input: {student_input}
 Respond ONLY with this JSON:
 {{"message": "Deep focus mode is active. Work through this independently.", "understood": false}}"""
+
+    if is_hint_mode:
+        hint_instruction = f"""
+HINT MODE ACTIVATED — The student has been working on this stage for {questions_asked} exchanges and is stuck.
+You must now shift your approach completely:
+
+1. Start by acknowledging specifically what they got RIGHT so far — be genuine and specific
+2. Identify the exact point where their reasoning broke down or got stuck — be clear and honest
+3. Explain WHY that part is conceptually tricky and what the correct way of thinking about it is
+4. Give ONE specific directional hint that narrows the search space — "think about X because Y" not "the answer is Z"
+5. Correct any fundamental misconception you see explicitly — do not dance around it
+6. End by asking them to try again with this new understanding
+7. Be warm, encouraging, and thorough — this is a teaching moment not a punishment
+8. Write as much as you need to actually help the student — do NOT limit your response length in hint mode
+9. Do NOT give the full answer or write the solution for them — guide them to it
+"""
+    else:
+        hint_instruction = ""
 
     base = f"""You are a Socratic tutor guiding a student through a structured academic reasoning process.
 
@@ -538,7 +557,7 @@ UNLOCK CONDITION: {stage_info["unlock_when"]}
 
 STAGE RULES (enforce strictly):
 {chr(10).join(f"- {r}" for r in stage_info["rules"])}
-
+{hint_instruction}
 CONVERSATION HISTORY:
 {history_text if history_text else "(none)"}
 
@@ -551,19 +570,20 @@ YOUR STATUS:
 - Questions asked in {stage.upper()} stage so far: {questions_asked}
 - Questions remaining before minimum reached: {questions_remaining} of {stage_info["questions"]} required
 - Your next question should target: {next_question_target}
+- Hint mode active: {"YES — give a thorough directional hint and correction" if is_hint_mode else "NO — pure Socratic only"}
 
 ABSOLUTE RULES — NEVER BREAK THESE:
 1. You MUST ask at least {stage_info["questions"]} questions in this stage — this is a MINIMUM, not a maximum
 2. Even if the student gives a perfect answer on the first try, you still ask all {stage_info["questions"]} questions
 3. After the minimum is reached, keep asking until the student has GENUINELY demonstrated the stage objective
 4. Ask ONLY ONE question per response — never two questions at once
-5. Never give the answer or solve it for them
+5. Never give the full answer or solve it for them — even in hint mode
 6. If the student violates a stage rule redirect them firmly back to the stage objective
 7. If questions_remaining > 0 → understood MUST be false, no exceptions
 8. If questions_remaining = 0 AND student has genuinely demonstrated the unlock condition → understood = true
 9. If questions_remaining = 0 BUT student has NOT genuinely demonstrated the unlock condition → keep asking, understood = false
-10. Keep your message to 2-3 sentences maximum
-11. Briefly acknowledge what the student said then ask the next targeted question"""
+10. In normal mode keep your message to 2-3 sentences maximum
+11. In HINT MODE write as much as needed — explain what they got right, where they went wrong, give a real directional hint, and ask them to try again. Do not limit your response length."""
 
     suffix = f"""
 
@@ -692,17 +712,13 @@ async def workspace_ai_guidance(
     body: WorkspaceAIGuidanceRequest,
     current_user=Security(get_current_user)
 ):
-    # Check message cap
+    # Log if student is in extended session
     student_messages_in_stage = sum(
         1 for msg in body.conversation_history
         if msg.get("role") == "student" and msg.get("stage") == body.stage
     )
-    max_allowed = MAX_MESSAGES_PER_STAGE.get(body.stage, 15)
-    if student_messages_in_stage >= max_allowed:
-        return {
-            "message": "You've reached the maximum exchanges for this stage. Review what you've written and continue to the next stage.",
-            "understood": True
-        }
+    if student_messages_in_stage >= 20:
+        print(f"Extended session: student has {student_messages_in_stage} messages in {body.stage} stage")
 
     # Build smart trimmed history
     history_text, questions_asked_in_stage = build_history_text(

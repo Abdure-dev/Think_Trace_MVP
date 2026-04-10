@@ -24,18 +24,8 @@ GEMINI_MODELS = [
     "models/gemini-2.5-flash-lite",
 ]
 
-MAX_MESSAGES_PER_STAGE = {
-    "understand": 10,
-    "concept": 10,
-    "plan": 12,
-    "attempt": 20,
-    "critique": 12,
-    "reflection": 10,
-}
-
 
 def call_gemini_extraction(contents):
-    """Gemini only — used for PDF and image extraction."""
     for model in GEMINI_MODELS:
         for attempt in range(5):
             try:
@@ -55,7 +45,6 @@ def call_gemini_extraction(contents):
 
 
 def call_guidance(prompt: str) -> str:
-    """Try Gemini first, fall back to Claude Haiku on failure."""
     fast_models = [
         "models/gemini-2.5-flash",
         "models/gemini-2.5-pro",
@@ -80,25 +69,20 @@ def call_guidance(prompt: str) -> str:
                     break
                 time.sleep(1)
 
-    # Gemini failed — fall back to Claude Haiku
     print("Gemini unavailable — falling back to Claude Haiku")
     try:
         message = claude_client.messages.create(
             model="claude-haiku-4-5-20251001",
-            max_tokens=600,
+            max_tokens=1000,
             messages=[{"role": "user", "content": prompt}]
         )
         return message.content[0].text
     except Exception as e:
         print(f"Claude fallback failed: {e}")
-        raise HTTPException(
-            status_code=503,
-            detail="AI service temporarily unavailable. Please try again."
-        )
+        raise HTTPException(status_code=503, detail="AI service temporarily unavailable. Please try again.")
 
 
 def call_summary(prompt: str) -> str:
-    """Always use Claude Sonnet for summary generation."""
     try:
         message = claude_client.messages.create(
             model="claude-sonnet-4-6",
@@ -311,17 +295,8 @@ Return ONLY the JSON array."""
 
 
 def build_history_text(conversation_history: list, current_stage: str) -> tuple[str, int]:
-    """
-    Smart history trimming:
-    - Keeps ALL student messages from current stage (most important)
-    - Keeps last 4 AI messages from current stage only (cuts verbose AI responses)
-    - Keeps ALL student messages from previous stages (context of what they covered)
-    - Drops all AI messages from previous stages (not needed)
-    This cuts tokens ~35% with almost zero quality loss.
-    """
     history_text = ""
     questions_asked_in_stage = 0
-
     current_stage_student_messages = []
     current_stage_ai_messages = []
     previous_stage_student_messages = []
@@ -344,22 +319,15 @@ def build_history_text(conversation_history: list, current_stage: str) -> tuple[
         else:
             if role == "student":
                 previous_stage_student_messages.append(msg)
-            # Drop all previous stage AI messages entirely
 
-    # Add previous stage student messages — compressed, no AI responses
     if previous_stage_student_messages:
         history_text += "\n--- What the student covered in previous stages ---"
         for msg in previous_stage_student_messages:
             stage_label = msg.get("stage", "unknown").upper()
             history_text += f"\n[{stage_label}] Student: {msg.get('content', '')}"
 
-    # Add ALL student messages from current stage
-    # Interleave with last 4 AI messages only
     if current_stage_student_messages or current_stage_ai_messages:
         history_text += f"\n--- Current stage: {current_stage.upper()} ---"
-
-        # Rebuild current stage conversation keeping all student messages
-        # but only last 4 AI responses
         current_stage_all = []
         for msg in conversation_history:
             role = msg.get("role", "student")
@@ -370,11 +338,8 @@ def build_history_text(conversation_history: list, current_stage: str) -> tuple[
             if stage == current_stage:
                 current_stage_all.append(msg)
 
-        # Find which AI messages to keep (last 4 only)
         ai_messages_in_order = [m for m in current_stage_all if m.get("role") == "ai"]
-        ai_messages_to_keep = set(
-            id(m) for m in ai_messages_in_order[-4:]
-        )
+        ai_messages_to_keep = set(id(m) for m in ai_messages_in_order[-4:])
 
         for msg in current_stage_all:
             role = msg.get("role", "student")
@@ -388,7 +353,6 @@ def build_history_text(conversation_history: list, current_stage: str) -> tuple[
 
 
 def parse_guidance_response(text: str) -> dict:
-    """Parse AI guidance response — handles both Gemini and Claude output."""
     text = text.strip()
     text = re.sub(r'```json\n?', '', text)
     text = re.sub(r'```\n?', '', text)
@@ -542,6 +506,27 @@ def build_ai_prompt(problem: str, stage: str, student_input: str, history_text: 
     questions_remaining = max(0, stage_info["questions"] - questions_asked)
     next_question_target = stage_info["question_targets"][min(questions_asked, len(stage_info["question_targets"]) - 1)]
 
+    HINT_THRESHOLD = 15
+    is_hint_mode = questions_asked >= HINT_THRESHOLD
+
+    if is_hint_mode:
+        hint_instruction = f"""
+HINT MODE ACTIVATED — The student has been working on this stage for {questions_asked} exchanges and is stuck.
+You must now shift your approach completely:
+
+1. Start by acknowledging specifically what they got RIGHT so far — be genuine and specific
+2. Identify the exact point where their reasoning broke down or got stuck — be clear and honest
+3. Explain WHY that part is conceptually tricky and what the correct way of thinking about it is
+4. Give ONE specific directional hint that narrows the search space — "think about X because Y" not "the answer is Z"
+5. Correct any fundamental misconception you see explicitly — do not dance around it
+6. End by asking them to try again with this new understanding
+7. Be warm, encouraging, and thorough — this is a teaching moment not a punishment
+8. Write as much as you need to actually help the student — do NOT limit your response length in hint mode
+9. Do NOT give the full answer or write the solution for them — guide them to it
+"""
+    else:
+        hint_instruction = ""
+
     return f"""You are a Socratic tutor guiding a student through a structured academic reasoning process.
 
 PROBLEM: {problem}
@@ -553,9 +538,12 @@ UNLOCK CONDITION: {stage_info["unlock_when"]}
 
 STAGE RULES (enforce strictly):
 {chr(10).join(f"- {r}" for r in stage_info["rules"])}
-
+{hint_instruction}
 CONVERSATION HISTORY:
 {history_text if history_text else "(none)"}
+
+NOTE: Previous stage entries show only student messages. Current stage shows full conversation with last 4 AI responses.
+Count only YOUR messages in the current stage section to determine questions asked.
 
 STUDENT'S LATEST RESPONSE: {student_input}
 
@@ -563,19 +551,20 @@ YOUR STATUS:
 - Questions asked in {stage.upper()} stage so far: {questions_asked}
 - Questions remaining before minimum reached: {questions_remaining} of {stage_info["questions"]} required
 - Your next question should target: {next_question_target}
+- Hint mode active: {"YES — give a thorough directional hint and correction" if is_hint_mode else "NO — pure Socratic only"}
 
 ABSOLUTE RULES — NEVER BREAK THESE:
 1. You MUST ask at least {stage_info["questions"]} questions before setting understood to true — this is a MINIMUM, not a maximum
 2. Even if the student gives a perfect answer, still ask all minimum questions
 3. After the minimum is reached, keep asking if the student has not genuinely demonstrated the stage objective
 4. Ask ONLY ONE question per response — never two at once
-5. Never give the answer or solve it for them
+5. Never give the full answer or solve it for them — even in hint mode
 6. If the student violates a stage rule redirect them firmly back to the stage objective
 7. If questions_remaining > 0 → understood MUST be false, no exceptions
 8. If questions_remaining = 0 AND student has genuinely demonstrated the unlock condition → understood = true
 9. If questions_remaining = 0 BUT student response is vague, incomplete, or a question → understood = false, keep asking
-10. Keep your message to 2-3 sentences maximum
-11. Briefly acknowledge what the student said then ask the next targeted question
+10. In normal mode keep your message to 2-3 sentences maximum
+11. In HINT MODE write as much as needed — explain what they got right, where they went wrong, give a real directional hint, and ask them to try again. Do not limit your response length.
 
 Respond ONLY with valid JSON:
 {{"message": "your response", "understood": false}}
@@ -683,19 +672,15 @@ async def get_problem_ai_guidance(
 
     problem_text = problem.data[0]["problem_text"]
 
-    # Check message cap
+    # Log extended sessions
     student_messages_in_stage = sum(
         1 for msg in body.conversation_history
         if msg.get("role") == "student" and msg.get("stage") == body.stage
     )
-    max_allowed = MAX_MESSAGES_PER_STAGE.get(body.stage, 15)
-    if student_messages_in_stage >= max_allowed:
-        return {
-            "message": "You've reached the maximum exchanges for this stage. Review what you've written and continue to the next stage.",
-            "understood": True
-        }
+    if student_messages_in_stage >= 20:
+        print(f"Extended session: student has {student_messages_in_stage} messages in {body.stage} stage")
 
-    # Build trimmed history
+    # Build smart trimmed history
     history_text, questions_asked_in_stage = build_history_text(
         body.conversation_history, body.stage
     )
